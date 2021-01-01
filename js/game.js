@@ -697,7 +697,7 @@ export class Level extends LevelInterface {
         }
 
         this.begin_tic(p1_input);
-        this.finish_tic();
+        this.finish_tic(p1_input);
     }
 
     // FIXME a whole bunch of these comments are gonna be wrong or confusing now
@@ -760,6 +760,10 @@ export class Level extends LevelInterface {
         this.p1_released |= ~p1_input;  // Action keys released since we last checked them
         
         if (this.compat.use_lynx_loop) {
+			if (this.compat.emulate_60fps)
+			{
+				this._finish_tic_lynx60();
+			}
             return;
         }
 
@@ -851,14 +855,16 @@ export class Level extends LevelInterface {
         this._do_combined_action_phase(1, true);
         this._do_wire_phase();
         this._do_static_phase();
-
-        this._do_decision_phase();
+    }
+	
+	_finish_tic_lynx60() {
+		this._do_decision_phase();
         this._do_combined_action_phase(1);
         this._do_wire_phase();
         this._do_static_phase();
 
         this._do_cleanup_phase();
-    }
+	}
 
     // Decision phase: all actors decide on their movement "simultaneously"
     _do_decision_phase(forced_only = false) {
