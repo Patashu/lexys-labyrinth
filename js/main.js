@@ -1105,60 +1105,36 @@ class Player extends PrimaryView {
             }
 
             let has_input = wait || input;
-			//If we're using a 20fps lynx style loop, then player decision is at the start of begin_tic and finish_tic does nothing - this makes turn based mode easier to conceptualize. We either don't need input and do a tic, or do need input and wait.
-			if (this.level.compat.use_lynx_loop && !this.level.compat.emulate_60fps)
-			{
-				//If the game needs input, then only proceed if we have input
-				if (this.turn_mode === 2) {
-					if (has_input) {
-						this.level.begin_tic(input);
-						this.turn_mode = 1;
-						this.last_advance = performance.now();
-					}
-				}
-				else
-				{
-					this.level.begin_tic(input);
+			let did_finish = false;
+			// Turn-based mode complicates this slightly; it aligns us to the middle of a tic
+			if (this.turn_mode === 2) {
+				if (has_input) {
+					// Finish the current tic, then continue as usual.  This means the end of the
+					// tic doesn't count against the number of tics to advance -- because it already
+					// did, the first time we tried it
+					this.level.finish_tic(input);
 					this.last_advance = performance.now();
+					this.turn_mode = 1;
+					did_finish = true;
 				}
-				if (this.turn_mode > 0 && this.level.can_accept_input()) {
-					// If we're in turn-based mode and want input, then start waiting for input
-					this.turn_mode = 2;
+				else {
+					continue;
 				}
 			}
-			else
-			{
-				let did_finish = false;
-				// Turn-based mode complicates this slightly; it aligns us to the middle of a tic
-				if (this.turn_mode === 2) {
-					if (has_input) {
-						// Finish the current tic, then continue as usual.  This means the end of the
-						// tic doesn't count against the number of tics to advance -- because it already
-						// did, the first time we tried it
-						this.level.finish_tic(input);
-						this.last_advance = performance.now();
-						this.turn_mode = 1;
-						did_finish = true;
-					}
-					else {
-						continue;
-					}
-				}
 
-				// We should now be at the start of a tic
-				// but only start one if we didn't finish one
-				if (!did_finish)
-				{
-					this.level.begin_tic(input);
-					if (this.turn_mode > 0 && this.level.can_accept_input() && !input) {
-						// If we're in turn-based mode and could provide input here, but don't have any,
-						// then wait until we do
-						this.turn_mode = 2;
-					}
-					else {
-						this.level.finish_tic(input);
-						this.last_advance = performance.now();
-					}
+			// We should now be at the start of a tic
+			// but only start one if we didn't finish one
+			if (!did_finish)
+			{
+				this.level.begin_tic(input);
+				if (this.turn_mode > 0 && this.level.can_accept_input() && !input) {
+					// If we're in turn-based mode and could provide input here, but don't have any,
+					// then wait until we do
+					this.turn_mode = 2;
+				}
+				else {
+					this.level.finish_tic(input);
+					this.last_advance = performance.now();
 				}
 			}
 
@@ -1167,7 +1143,7 @@ class Player extends PrimaryView {
                 this.set_state('stopped');
                 break;
             }
-        }
+		}
 
         this.update_ui();
         if (this.debug && this.debug.replay && this.debug.replay_recording) {

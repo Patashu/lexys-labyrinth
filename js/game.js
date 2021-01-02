@@ -764,6 +764,10 @@ export class Level extends LevelInterface {
 			{
 				this._finish_tic_lynx60();
 			}
+			else
+			{
+				this._finish_tic_lynx();
+			}
             return;
         }
 
@@ -834,14 +838,18 @@ export class Level extends LevelInterface {
     }
 
     // Lynx-style loop: everyone decides, then everyone moves/cools.
+	// Moved it all to finish tic for turn-based mode consistency.
     _begin_tic_lynx() {
-        this._do_decision_phase();
+    }
+
+	_finish_tic_lynx() {
+		this._do_decision_phase();
         this._do_combined_action_phase(3);
         this._do_wire_phase();
         this._do_static_phase();
 
         this._do_cleanup_phase();
-    }
+	}
 
     // Same as above, but split up to run at 60fps, where only every third frame allows for
     // decisions.  This is how CC2 works.
