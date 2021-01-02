@@ -1113,11 +1113,13 @@ class Player extends PrimaryView {
 					if (has_input) {
 						this.level.begin_tic(input);
 						this.turn_mode = 1;
+						this.last_advance = performance.now();
 					}
 				}
 				else
 				{
 					this.level.begin_tic(input);
+					this.last_advance = performance.now();
 				}
 				if (this.turn_mode > 0 && this.level.can_accept_input()) {
 					// If we're in turn-based mode and want input, then start waiting for input
@@ -1134,6 +1136,7 @@ class Player extends PrimaryView {
 						// tic doesn't count against the number of tics to advance -- because it already
 						// did, the first time we tried it
 						this.level.finish_tic(input);
+						this.last_advance = performance.now();
 						this.turn_mode = 1;
 						did_finish = true;
 					}
@@ -1154,6 +1157,7 @@ class Player extends PrimaryView {
 					}
 					else {
 						this.level.finish_tic(input);
+						this.last_advance = performance.now();
 					}
 				}
 			}
@@ -1178,8 +1182,6 @@ class Player extends PrimaryView {
             this._advance_handle = null;
             return;
         }
-
-        this.last_advance = performance.now();
 
         // If the game is running faster than normal, we cap the timeout between game loops at 10ms
         // and do multiple loops at a time
@@ -1232,10 +1234,12 @@ class Player extends PrimaryView {
         // TODO i'm not sure it'll be right when rewinding either
         // TODO or if the game's speed changes.  wow!
         let tic_offset;
-        if (this.turn_mode === 2 && this.level.can_accept_input()) {
+		let waiting_for_input = false;
+		if (this.turn_mode === 2 && this.level.can_accept_input()) {
             // We're dawdling between tics, so nothing is actually animating, but the clock hasn't
             // advanced yet; pretend whatever's currently animating has finished
-            tic_offset = 0.999;
+            tic_offset = 0;
+			waiting_for_input = true;
         }
         else if (this.use_interpolation) {
             tic_offset = Math.min(0.9999, (performance.now() - this.last_advance) / 1000 * TICS_PER_SECOND * this.play_speed);
@@ -1247,7 +1251,7 @@ class Player extends PrimaryView {
             tic_offset = 0.999;
         }
 
-        this._redraw(tic_offset);
+        this._redraw(tic_offset, waiting_for_input);
 
         // Check for a stopped game *after* drawing, so that if the game ends, we still draw its
         // final result before stopping the draw loop
@@ -1262,8 +1266,8 @@ class Player extends PrimaryView {
 
     // Actually redraw.  Used to force drawing outside of normal play, in which case we don't
     // interpolate (because we're probably paused)
-    _redraw(tic_offset = 0) {
-        this.renderer.draw(tic_offset);
+    _redraw(tic_offset = 0, waiting_for_input = false) {
+        this.renderer.draw(tic_offset, waiting_for_input);
     }
 
     render_inventory_tile(name) {

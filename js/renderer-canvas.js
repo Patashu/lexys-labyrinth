@@ -82,7 +82,7 @@ export class CanvasRenderer {
             this.blit(ctx, tx + mx, ty + my, offsetx + mdx, offsety + mdy, mw, mh);
     }
 
-    draw(tic_offset = 0) {
+    draw(tic_offset = 0, waiting_for_input = false) {
         if (! this.level) {
             console.warn("CanvasRenderer.draw: No level to render");
             return;
@@ -96,7 +96,7 @@ export class CanvasRenderer {
             this.canvas.style.setProperty('--viewport-height', this.viewport_size_y);
         }
 
-        let tic = (this.level.tic_counter ?? 0) + tic_offset;
+        let tic = (this.level.tic_counter ?? 0) + tic_offset + (waiting_for_input ? 1 : 0);
         let tw = this.tileset.size_x;
         let th = this.tileset.size_y;
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
