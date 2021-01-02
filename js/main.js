@@ -1214,8 +1214,15 @@ class Player extends PrimaryView {
 		if (this.turn_mode === 2 && this.level.can_accept_input()) {
             // We're dawdling between tics, so nothing is actually animating, but the clock hasn't
             // advanced yet; pretend whatever's currently animating has finished
-            tic_offset = 0;
-			waiting_for_input = true;
+			if (this.level.compat.use_lynx_loop && !this.level.compat.emulate_60fps)
+			{
+				tic_offset = 0.9999;
+			}
+			else
+			{
+				tic_offset = 0;
+				waiting_for_input = true;
+			}
         }
         else if (this.use_interpolation) {
             tic_offset = Math.min(0.9999, (performance.now() - this.last_advance) / 1000 * TICS_PER_SECOND * this.play_speed);
