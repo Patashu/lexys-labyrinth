@@ -1132,45 +1132,45 @@ class Player extends PrimaryView {
             }
 
             let has_input = wait || input;
-			let did_finish = false;
-			// Turn-based mode complicates this slightly; it aligns us to the middle of a tic
-			if (this.turn_mode === 2) {
-				if (has_input || force) {
-					// Finish the current tic, then continue as usual.  This means the end of the
-					// tic doesn't count against the number of tics to advance -- because it already
-					// did, the first time we tried it
-					this.level.finish_tic(input);
-					this.last_advance = performance.now();
-					this.turn_mode = 1;
-					did_finish = true;
-				}
-				else {
-					continue;
-				}
-			}
+            let did_finish = false;
+            // Turn-based mode complicates this slightly; it aligns us to the middle of a tic
+            if (this.turn_mode === 2) {
+                if (has_input || force) {
+                    // Finish the current tic, then continue as usual.  This means the end of the
+                    // tic doesn't count against the number of tics to advance -- because it already
+                    // did, the first time we tried it
+                    this.level.finish_tic(input);
+                    this.last_advance = performance.now();
+                    this.turn_mode = 1;
+                    did_finish = true;
+                }
+                else {
+                    continue;
+                }
+            }
 
-			// We should now be at the start of a tic
-			// but only start one if we didn't finish one
-			if (!did_finish)
-			{
-				this.level.begin_tic(input);
-				if (this.turn_mode > 0 && this.level.can_accept_input() && !input) {
-					// If we're in turn-based mode and could provide input here, but don't have any,
-					// then wait until we do
-					this.turn_mode = 2;
-				}
-				else {
-					this.level.finish_tic(input);
-					this.last_advance = performance.now();
-				}
-			}
+            // We should now be at the start of a tic
+            // but only start one if we didn't finish one
+            if (!did_finish)
+            {
+                this.level.begin_tic(input);
+                if (this.turn_mode > 0 && this.level.can_accept_input() && !input) {
+                    // If we're in turn-based mode and could provide input here, but don't have any,
+                    // then wait until we do
+                    this.turn_mode = 2;
+                }
+                else {
+                    this.level.finish_tic(input);
+                    this.last_advance = performance.now();
+                }
+            }
 
             if (this.level.state !== 'playing') {
                 // We either won or lost!
                 this.set_state('stopped');
                 break;
             }
-		}
+        }
 
         this.update_ui();
         if (this.debug && this.debug.replay && this.debug.replay_recording) {
@@ -1237,19 +1237,19 @@ class Player extends PrimaryView {
         // TODO i'm not sure it'll be right when rewinding either
         // TODO or if the game's speed changes.  wow!
         let tic_offset;
-		let waiting_for_input = false;
-		if (this.turn_mode === 2) {
+        let waiting_for_input = false;
+        if (this.turn_mode === 2) {
             // We're dawdling between tics, so nothing is actually animating, but the clock hasn't
             // advanced yet; pretend whatever's currently animating has finished
-			if (this.level.compat.use_lynx_loop && !this.level.compat.emulate_60fps)
-			{
-				tic_offset = 0.9999;
-			}
-			else
-			{
-				tic_offset = 0;
-				waiting_for_input = true;
-			}
+            if (this.level.compat.use_lynx_loop && !this.level.compat.emulate_60fps)
+            {
+                tic_offset = 0.9999;
+            }
+            else
+            {
+                tic_offset = 0;
+                waiting_for_input = true;
+            }
         }
         else if (this.use_interpolation) {
             tic_offset = Math.min(0.9999, (performance.now() - this.last_advance) / 1000 * TICS_PER_SECOND * this.play_speed);
@@ -1278,7 +1278,7 @@ class Player extends PrimaryView {
     // Actually redraw.  Used to force drawing outside of normal play, in which case we don't
     // interpolate (because we're probably paused)
     _redraw(tic_offset = null, waiting_for_input = false) {
-		if (tic_offset === null) {
+        if (tic_offset === null) {
             // Default to drawing the "end" state of the tic when we're paused; it matches
             // turn-based mode's "waiting" behavior, and it makes tic-by-tic navigation make a lot
             // more sense visually

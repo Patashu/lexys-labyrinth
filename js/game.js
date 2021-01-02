@@ -760,14 +760,14 @@ export class Level extends LevelInterface {
         this.p1_released |= ~p1_input;  // Action keys released since we last checked them
         
         if (this.compat.use_lynx_loop) {
-			if (this.compat.emulate_60fps)
-			{
-				this._finish_tic_lynx60();
-			}
-			else
-			{
-				this._finish_tic_lynx();
-			}
+            if (this.compat.emulate_60fps)
+            {
+                this._finish_tic_lynx60();
+            }
+            else
+            {
+                this._finish_tic_lynx();
+            }
             return;
         }
 
@@ -838,18 +838,18 @@ export class Level extends LevelInterface {
     }
 
     // Lynx-style loop: everyone decides, then everyone moves/cools.
-	// Moved it all to finish tic for turn-based mode consistency.
+    // Moved it all to finish tic for turn-based mode consistency.
     _begin_tic_lynx() {
     }
 
-	_finish_tic_lynx() {
-		this._do_decision_phase();
+    _finish_tic_lynx() {
+        this._do_decision_phase();
         this._do_combined_action_phase(3);
         this._do_wire_phase();
         this._do_static_phase();
 
         this._do_cleanup_phase();
-	}
+    }
 
     // Same as above, but split up to run at 60fps, where only every third frame allows for
     // decisions.  This is how CC2 works.
@@ -864,17 +864,17 @@ export class Level extends LevelInterface {
         this._do_wire_phase();
         this._do_static_phase();
     }
-	
-	_finish_tic_lynx60() {
-		 // This is in the "finish" part to preserve the property turn-based mode expects, where "finish"
-		// picks up right when the player could provide input
-		this._do_decision_phase();
+    
+    _finish_tic_lynx60() {
+         // This is in the "finish" part to preserve the property turn-based mode expects, where "finish"
+        // picks up right when the player could provide input
+        this._do_decision_phase();
         this._do_combined_action_phase(1);
         this._do_wire_phase();
         this._do_static_phase();
 
         this._do_cleanup_phase();
-	}
+    }
 
     // Decision phase: all actors decide on their movement "simultaneously"
     _do_decision_phase(forced_only = false) {
