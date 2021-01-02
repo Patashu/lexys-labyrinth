@@ -1135,7 +1135,7 @@ class Player extends PrimaryView {
 			let did_finish = false;
 			// Turn-based mode complicates this slightly; it aligns us to the middle of a tic
 			if (this.turn_mode === 2) {
-				if (has_input) {
+				if (has_input || force) {
 					// Finish the current tic, then continue as usual.  This means the end of the
 					// tic doesn't count against the number of tics to advance -- because it already
 					// did, the first time we tried it
