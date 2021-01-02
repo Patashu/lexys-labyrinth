@@ -1238,7 +1238,7 @@ class Player extends PrimaryView {
         // TODO or if the game's speed changes.  wow!
         let tic_offset;
 		let waiting_for_input = false;
-		if (this.turn_mode === 2 && this.level.can_accept_input()) {
+		if (this.turn_mode === 2) {
             // We're dawdling between tics, so nothing is actually animating, but the clock hasn't
             // advanced yet; pretend whatever's currently animating has finished
 			if (this.level.compat.use_lynx_loop && !this.level.compat.emulate_60fps)
