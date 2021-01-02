@@ -866,6 +866,8 @@ export class Level extends LevelInterface {
     }
 	
 	_finish_tic_lynx60() {
+		 // This is in the "finish" part to preserve the property turn-based mode expects, where "finish"
+		// picks up right when the player could provide input
 		this._do_decision_phase();
         this._do_combined_action_phase(1);
         this._do_wire_phase();

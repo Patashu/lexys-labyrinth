@@ -1,5 +1,7 @@
 // TODO bugs and quirks i'm aware of:
 // - steam: if a player character starts on a force floor they won't be able to make any voluntary movements until they are no longer on a force floor
+import * as fflate from 'https://unpkg.com/fflate/esm/index.mjs';
+
 import { DIRECTIONS, INPUT_BITS, TICS_PER_SECOND } from './defs.js';
 import * as c2g from './format-c2g.js';
 import * as dat from './format-dat.js';
@@ -446,9 +448,34 @@ class Player extends PrimaryView {
                 return;
             }
 
+            // Per-tic navigation; only useful if the game isn't running
+            if (ev.key === ',') {
+                if (this.state === 'stopped' || this.state === 'paused' || this.turn_mode > 0) {
+                    this.set_state('paused');
+                    this.undo();
+                    this.update_ui();
+                    this._redraw();
+                }
+                return;
+            }
+            if (ev.key === '.') {
+                if (this.state === 'waiting' || this.state === 'paused' || this.turn_mode > 0) {
+                    if (this.state === 'waiting' || this.turn_mode === 1) {
+                        this.set_state('paused');
+                    }
+                    this.advance_by(1, true);
+                    this._redraw();
+                }
+                return;
+            }
+
             if (ev.key === ' ') {
                 if (this.state === 'waiting') {
                     // Start without moving
+                    this.set_state('playing');
+                }
+                else if (this.state === 'paused') {
+                    // Turns out I do this an awful lot expecting it to work, so
                     this.set_state('playing');
                 }
                 else if (this.state === 'stopped') {
@@ -656,7 +683,7 @@ class Player extends PrimaryView {
                 }
                 this.set_state('paused');
 
-                this.advance_by(dt);
+                this.advance_by(dt, true);
             }
             else if (dt < 0) {
                 if (this.state === 'waiting') {
@@ -1084,7 +1111,7 @@ class Player extends PrimaryView {
         return input;
     }
 
-    advance_by(tics) {
+    advance_by(tics, force = false) {
         for (let i = 0; i < tics; i++) {
             // FIXME turn-based mode should be disabled during a replay
             let input = this.get_input();
@@ -1150,7 +1177,7 @@ class Player extends PrimaryView {
             this.debug.replay_custom_label.textContent = format_replay_duration(this.debug.custom_replay.duration);
         }
     }
-    
+
     // Main driver of the level; advances by one tic, then schedules itself to
     // be called again next tic
     advance() {
@@ -1239,6 +1266,7 @@ class Player extends PrimaryView {
         // Check for a stopped game *after* drawing, so that if the game ends, we still draw its
         // final result before stopping the draw loop
         // TODO for bonus points, also finish the player animation (but don't advance the game any further)
+        // TODO stop redrawing when in turn-based mode 2?
         if (this.state === 'playing' || this.state === 'rewinding') {
             this._redraw_handle = requestAnimationFrame(this._redraw_bound);
         }
@@ -1249,7 +1277,18 @@ class Player extends PrimaryView {
 
     // Actually redraw.  Used to force drawing outside of normal play, in which case we don't
     // interpolate (because we're probably paused)
-    _redraw(tic_offset = 0, waiting_for_input = false) {
+    _redraw(tic_offset = null, waiting_for_input = false) {
+		if (tic_offset === null) {
+            // Default to drawing the "end" state of the tic when we're paused; it matches
+            // turn-based mode's "waiting" behavior, and it makes tic-by-tic navigation make a lot
+            // more sense visually
+            if (this.state === 'paused') {
+                tic_offset = 0.999;
+            }
+            else {
+                tic_offset = 0;
+            }
+        }
         this.renderer.draw(tic_offset, waiting_for_input);
     }
 
@@ -1328,7 +1367,12 @@ class Player extends PrimaryView {
 
         if (this.debug.enabled) {
             let t = this.level.tic_counter;
-            this.debug.time_tics_el.textContent = `${t}`;
+            if (this.turn_mode === 2) {
+                this.debug.time_tics_el.textContent = `${t}½`;
+            }
+            else {
+                this.debug.time_tics_el.textContent = `${t}`;
+            }
             this.debug.time_moves_el.textContent = `${Math.floor(t/4)}`;
             this.debug.time_secs_el.textContent = (t / 20).toFixed(2);
 
@@ -1349,6 +1393,11 @@ class Player extends PrimaryView {
     }
 
     autopause() {
+        if (this.turn_mode > 0) {
+            // Turn-based mode doesn't need this
+            return;
+        }
+
         this.set_state('paused');
     }
 
@@ -3099,8 +3148,22 @@ class Conductor {
             stored_game = c2g.wrap_individual_level(buf);
             identifier = null;
         }
-        else if (magic === '\xac\xaa\x02\x00' || magic == '\xac\xaa\x02\x01') {
+        else if (
+            // standard mscc DAT
+            magic === '\xac\xaa\x02\x00' ||
+            // tile world i think
+            magic === '\xac\xaa\x02\x01' ||
+            // pgchip, which adds ice blocks
+            magic === '\xac\xaa\x03\x00')
+        {
             stored_game = dat.parse_game(buf);
+        }
+        else if (magic === 'PK\x03\x04') {
+            // That's the ZIP header
+            // FIXME move this here i guess and flesh it out some
+            // FIXME if this doesn't find something then we should abort
+            await this.splash.search_multi_source(new util.ZipFileSource(buf));
+            return;
         }
         else if (magic.toLowerCase() === 'game') {
             // TODO this isn't really a magic number and isn't required to be first, so, maybe
@@ -3113,12 +3176,28 @@ class Conductor {
                 dir = path.replace(/[/][^/]+$/, '');
             }
             stored_game = await c2g.parse_game(buf, source, dir);
+
+            if (stored_game.identifier) {
+                // Migrate any scores saved under the old path-based identifier
+                let new_identifier = stored_game.identifier;
+                if (this.stash.packs[identifier] && ! this.stash.packs[new_identifier]) {
+                    this.stash.packs[new_identifier] = this.stash.packs[identifier];
+                    delete this.stash.packs[identifier];
+                    this.save_stash();
+
+                    window.localStorage.setItem(
+                        STORAGE_PACK_PREFIX + new_identifier,
+                        window.localStorage.getItem(STORAGE_PACK_PREFIX + identifier));
+                    window.localStorage.removeItem(STORAGE_PACK_PREFIX + identifier);
+                }
+
+                identifier = new_identifier;
+            }
         }
         else {
             throw new Error("Unrecognized file format");
         }
 
-        // TODO load title for a C2G
         if (! stored_game.title) {
             stored_game.title = title ?? identifier ?? "Untitled pack";
         }

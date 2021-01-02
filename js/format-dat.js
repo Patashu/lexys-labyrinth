@@ -63,7 +63,7 @@ const TILE_ENCODING = {
     0x35: 'bogus_player_burned',
     0x36: 'wall_invisible',  // unused
     0x37: 'wall_invisible',  // unused
-    0x38: 'wall_invisible',  // unused
+    0x38: 'ice_block',       // unused, but co-opted by pgchip
     0x39: 'bogus_player_win',
     0x3a: 'bogus_player_win',
     0x3b: 'bogus_player_win',
@@ -247,6 +247,16 @@ function parse_level(bytes, number) {
                     continue;
                 }
 
+                // pgchip grants directions to ice blocks on cloners by putting a clone block
+                // beneath them instead
+                if (l === 1 && 0x0e <= tile_byte && tile_byte <= 0x11 &&
+                    cell[0] && cell[0].type.name === 'ice_block')
+                {
+                    cell[0].direction = extra.direction;
+                    cell.unshift({type: TILE_TYPES['cloner']});
+                    continue;
+                }
+
                 cell.unshift({...tile});
             }
         }
@@ -351,6 +361,10 @@ export function parse_game(buf) {
     else if (magic === 0x0102aaac) {
         // OK
         // TODO tile world convention, use lynx rules
+    }
+    else if (magic === 0x0003aaac) {
+        // OK
+        // TODO add in ice block i guess???
     }
     else {
         throw new Error(`Unrecognized magic number ${magic.toString(16)}`);

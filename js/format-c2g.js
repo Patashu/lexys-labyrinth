@@ -1499,7 +1499,8 @@ export function synthesize_level(stored_level) {
     hints = hints.map(hint => hint ?? '');
     hints.push('');
     hints.unshift('');
-    c2m.add_section('NOTE', hints.join('\n[CLUE]\n'));
+    // Must use Windows linebreaks here  🙄
+    c2m.add_section('NOTE', hints.join('\r\n[CLUE]\r\n'));
 
     let compressed_map = compress(map_bytes);
     if (compressed_map) {
@@ -1978,6 +1979,16 @@ const MAX_SIMULTANEOUS_REQUESTS = 5;
             path = path.replace(/\\/, '/');
             fetch_map(path, level_number);
             level_number++;
+        }
+        else if (stmt.kind === 'directive' && stmt.name === 'game') {
+            // TODO apparently cc2 lets you change this mid-game and will then use a different save
+            // slot (?!), but i can't even consider that until i actually execute these things in
+            // order
+            if (game.identifier === undefined) {
+                let title = stmt.args[0].value;
+                game.identifier = title;
+                game.title = title;
+            }
         }
         statements.push(stmt);
     }

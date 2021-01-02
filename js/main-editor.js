@@ -1,3 +1,5 @@
+import * as fflate from 'https://unpkg.com/fflate/esm/index.mjs';
+
 import { DIRECTIONS, TICS_PER_SECOND } from './defs.js';
 import { TILES_WITH_PROPS } from './editor-tile-overlays.js';
 import * as format_base from './format-base.js';
@@ -162,6 +164,7 @@ class EditorLevelMetaOverlay extends DialogOverlay {
             let title = els.title.value;
             if (title !== stored_level.title) {
                 stored_level.title = title;
+                this.conductor.stored_game.level_metadata[this.conductor.level_index].title = title;
                 this.conductor.update_level_title();
             }
             let author = els.author.value;
@@ -2543,39 +2546,12 @@ export class Editor extends PrimaryView {
             new EditorLevelMetaOverlay(this.conductor, this.stored_level).open();
         });
         this.save_button = _make_button("Save", ev => {
-            // TODO need feedback.  or maybe not bc this should be replaced with autosave later
-            // TODO also need to update the pack data's last modified time
-            let stored_game = this.conductor.stored_game;
-            if (! stored_game.editor_metadata)
-                return;
-
-            // Update the pack index; we need to do this to update the last modified time anyway, so
-            // there's no point in checking whether anything actually changed
-            let pack_key = stored_game.editor_metadata.key;
-            this.stash.packs[pack_key].title = stored_game.title;
-            this.stash.packs[pack_key].last_modified = Date.now();
-
-            // Update the pack itself
-            // TODO maybe should keep this around, but there's a tricky order of operations thing
-            // with it
-            let pack_stash = load_json_from_storage(pack_key);
-            pack_stash.title = stored_game.title;
-            pack_stash.last_modified = Date.now();
-
-            // Serialize the level itself
-            let buf = c2g.synthesize_level(this.stored_level);
-            let stringy_buf = string_from_buffer_ascii(buf);
-
-            // Save everything at once, level first, to minimize chances of an error getting things
-            // out of sync
-            window.localStorage.setItem(this.stored_level.editor_metadata.key, stringy_buf);
-            save_json_to_storage(pack_key, pack_stash);
-            save_json_to_storage("Lexy's Labyrinth editor", this.stash);
+            this.save_level();
         });
         if (this.stored_level) {
             this.save_button.disabled = ! this.conductor.stored_game.editor_metadata;
         }
-        _make_button("Download", ev => {
+        _make_button("Download level as C2M", ev => {
             // TODO also allow download as CCL
             // TODO support getting warnings + errors out of synthesis
             let buf = c2g.synthesize_level(this.stored_level);
@@ -2585,6 +2561,66 @@ export class Editor extends PrimaryView {
             let a = mk('a', {
                 href: url,
                 download: (this.stored_level.title || 'untitled') + '.c2m',
+            });
+            document.body.append(a);
+            a.click();
+            // Absolutely no idea when I'm allowed to revoke this, but surely a minute is safe
+            window.setTimeout(() => {
+                a.remove();
+                URL.revokeObjectURL(url);
+            }, 60 * 1000);
+        });
+        _make_button("Download pack", ev => {
+            let stored_pack = this.conductor.stored_game;
+
+            // This is pretty heckin' best-effort for now; TODO move into format-c2g?
+            let lines = [];
+            let safe_title = (stored_pack.title || "untitled").replace(/[""]/g, "'").replace(/[\x00-\x1f]+/g, "_");
+            lines.push(`game "${safe_title}"`);
+
+            let files = {};
+            let count = stored_pack.level_metadata.length;
+            let levelnumlen = String(count).length;
+            for (let [i, meta] of stored_pack.level_metadata.entries()) {
+                let c2m;
+                if (i === this.conductor.level_index) {
+                    // Use the current state of the current level even if it's not been saved
+                    c2m = new Uint8Array(c2g.synthesize_level(this.stored_level));
+                }
+                else if (meta.key) {
+                    // This is already in localStorage as a c2m
+                    c2m = fflate.strToU8(localStorage.getItem(meta.key), true);
+                }
+                else {
+                    let stored_level = stored_pack.load_level(i);
+                    c2m = new Uint8Array(c2g.synthesize_level(stored_level));
+                }
+
+                let safe_title = meta.title.replace(/[\x00-\x1f<>:""\/\\|?*]+/g, '_');
+                let dirchunk = i - i % 50;
+                let dirname = (
+                    String(dirchunk + 1).padStart(levelnumlen, '0') + '-' +
+                    String(Math.min(count, dirchunk + 50)).padStart(levelnumlen, '0'));
+                let filename = `${dirname}/${i + 1} - ${safe_title}.c2m`;
+                files[filename] = c2m;
+
+                lines.push(`map "${filename}"`);
+            }
+
+            // TODO utf8 encode this
+            safe_title = safe_title.replace(/[\x00-\x1f<>:""\/\\|?*]+/g, '_');
+            lines.push("");
+            files[safe_title + '.c2g'] = fflate.strToU8(lines.join("\n"));
+            let u8array = fflate.zipSync(files);
+
+            // TODO also allow download as CCL
+            // TODO support getting warnings + errors out of synthesis
+            let blob = new Blob([u8array]);
+            let url = URL.createObjectURL(blob);
+            // To download a file, um, make an <a> and click it.  Not kidding
+            let a = mk('a', {
+                href: url,
+                download: (stored_pack.title || 'untitled') + '.zip',
             });
             document.body.append(a);
             a.click();
@@ -2671,6 +2707,8 @@ export class Editor extends PrimaryView {
         super.activate();
         this.renderer.draw();
     }
+
+    // Level creation, management, and saving
 
     _make_cell() {
         let cell = new format_base.StoredCell;
@@ -2818,6 +2856,39 @@ export class Editor extends PrimaryView {
         window.localStorage.setItem(level_key, stringy_buf);
 
         this.conductor.change_level(index);
+    }
+
+    save_level() {
+        // TODO need feedback.  or maybe not bc this should be replaced with autosave later
+        // TODO also need to update the pack data's last modified time
+        let stored_game = this.conductor.stored_game;
+        if (! stored_game.editor_metadata)
+            return;
+
+        // Update the pack index; we need to do this to update the last modified time anyway, so
+        // there's no point in checking whether anything actually changed
+        let pack_key = stored_game.editor_metadata.key;
+        this.stash.packs[pack_key].title = stored_game.title;
+        this.stash.packs[pack_key].last_modified = Date.now();
+
+        // Update the pack itself
+        // TODO maybe should keep this around, but there's a tricky order of operations thing
+        // with it
+        let pack_stash = load_json_from_storage(pack_key);
+        pack_stash.title = stored_game.title;
+        pack_stash.last_modified = Date.now();
+        pack_stash.levels[this.conductor.level_index].title = this.stored_level.title;
+        pack_stash.levels[this.conductor.level_index].last_modified = Date.now();
+
+        // Serialize the level itself
+        let buf = c2g.synthesize_level(this.stored_level);
+        let stringy_buf = string_from_buffer_ascii(buf);
+
+        // Save everything at once, level first, to minimize chances of an error getting things
+        // out of sync
+        window.localStorage.setItem(this.stored_level.editor_metadata.key, stringy_buf);
+        save_json_to_storage(pack_key, pack_stash);
+        save_json_to_storage("Lexy's Labyrinth editor", this.stash);
     }
 
     load_game(stored_game) {
