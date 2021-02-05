@@ -1,6 +1,35 @@
-import { DIRECTIONS, DRAW_LAYERS } from './defs.js';
+import { DIRECTIONS, LAYERS } from './defs.js';
 import { mk } from './util.js';
+import { DrawPacket } from './tileset.js';
 import TILE_TYPES from './tiletypes.js';
+
+class CanvasRendererDrawPacket extends DrawPacket {
+    constructor(renderer, ctx, tic, perception) {
+        super(tic, perception);
+        this.renderer = renderer;
+        this.ctx = ctx;
+        // Canvas position of the cell being drawn
+        this.x = 0;
+        this.y = 0;
+        // Offset within the cell, for actors in motion
+        this.offsetx = 0;
+        this.offsety = 0;
+    }
+
+    blit(tx, ty, mx = 0, my = 0, mw = 1, mh = mw, mdx = mx, mdy = my) {
+        this.renderer.blit(this.ctx,
+            tx + mx, ty + my,
+            this.x + this.offsetx + mdx, this.y + this.offsety + mdy,
+            mw, mh);
+    }
+
+    blit_aligned(tx, ty, mx = 0, my = 0, mw = 1, mh = mw, mdx = mx, mdy = my) {
+        this.renderer.blit(this.ctx,
+            tx + mx, ty + my,
+            this.x + mdx, this.y + mdy,
+            mw, mh);
+    }
+}
 
 export class CanvasRenderer {
     constructor(tileset, fixed_size = null) {
@@ -21,13 +50,17 @@ export class CanvasRenderer {
         this.canvas = mk('canvas', {width: tileset.size_x * this.viewport_size_x, height: tileset.size_y * this.viewport_size_y});
         this.canvas.style.setProperty('--viewport-width', this.viewport_size_x);
         this.canvas.style.setProperty('--viewport-height', this.viewport_size_y);
+        this.canvas.style.setProperty('--tile-width', `${tileset.size_x}px`);
+        this.canvas.style.setProperty('--tile-height', `${tileset.size_y}px`);
         this.ctx = this.canvas.getContext('2d');
         this.viewport_x = 0;
         this.viewport_y = 0;
         this.viewport_dirty = false;
         this.show_actor_bboxes = false;
+        this.show_actor_order = false;
         this.use_rewind_effect = false;
         this.perception = 'normal';  // normal, xray, editor, palette
+        this.active_player = null;
     }
 
     set_level(level) {
@@ -35,11 +68,32 @@ export class CanvasRenderer {
         // TODO update viewport size...  or maybe Game should do that since you might be cheating
     }
 
+    set_active_player(actor) {
+        this.active_player = actor;
+    }
+
     // Change the viewport size.  DOES NOT take effect until the next redraw!
     set_viewport_size(x, y) {
         this.viewport_size_x = x;
         this.viewport_size_y = y;
         this.viewport_dirty = true;
+    }
+
+    set_tileset(tileset) {
+        this.tileset = tileset;
+        this.viewport_dirty = true;
+    }
+
+    get_cell_rect(x, y) {
+        let rect = this.canvas.getBoundingClientRect();
+        let scale_x = rect.width / this.canvas.width;
+        let scale_y = rect.height / this.canvas.height;
+        let tile_w = scale_x * this.tileset.size_x;
+        let tile_h = scale_y * this.tileset.size_y;
+        return new DOMRect(
+            rect.x + (x - this.viewport_x) * tile_w,
+            rect.y + (y - this.viewport_y) * tile_h,
+            tile_w, tile_h);
     }
 
     cell_coords_from_event(ev) {
@@ -70,16 +124,17 @@ export class CanvasRenderer {
             dx * tw, dy * th, w * tw, h * th);
     }
 
-    _make_tileset_blitter(ctx, offsetx = 0, offsety = 0) {
-        // The blit we pass to the tileset has a different signature than our own:
-        // blit(
-        //     source_tile_x, source_tile_y,
-        //     mask_x = 0, mask_y = 0, mask_width = 1, mask_height = mask_width,
-        //     mask_dx = mask_x, mask_dy = mask_y)
-        // This makes it easier to use in the extremely common case of drawing part of one tile atop
-        // another tile, but still aligned to the grid.
-        return (tx, ty, mx = 0, my = 0, mw = 1, mh = mw, mdx = mx, mdy = my) =>
-            this.blit(ctx, tx + mx, ty + my, offsetx + mdx, offsety + mdy, mw, mh);
+    _adjust_viewport_if_dirty() {
+        if (! this.viewport_dirty)
+            return;
+
+        this.viewport_dirty = false;
+        this.canvas.setAttribute('width', this.tileset.size_x * this.viewport_size_x);
+        this.canvas.setAttribute('height', this.tileset.size_y * this.viewport_size_y);
+        this.canvas.style.setProperty('--viewport-width', this.viewport_size_x);
+        this.canvas.style.setProperty('--viewport-height', this.viewport_size_y);
+        this.canvas.style.setProperty('--tile-width', `${this.tileset.size_x}px`);
+        this.canvas.style.setProperty('--tile-height', `${this.tileset.size_y}px`);
     }
 
     draw(tic_offset = 0, waiting_for_input = false) {
@@ -88,15 +143,11 @@ export class CanvasRenderer {
             return;
         }
 
-        if (this.viewport_dirty) {
-            this.viewport_dirty = false;
-            this.canvas.setAttribute('width', this.tileset.size_x * this.viewport_size_x);
-            this.canvas.setAttribute('height', this.tileset.size_y * this.viewport_size_y);
-            this.canvas.style.setProperty('--viewport-width', this.viewport_size_x);
-            this.canvas.style.setProperty('--viewport-height', this.viewport_size_y);
-        }
-
+        this._adjust_viewport_if_dirty();
+		
         let tic = (this.level.tic_counter ?? 0) + tic_offset + (waiting_for_input ? 1 : 0);
+        let packet = new CanvasRendererDrawPacket(this, this.ctx, tic, this.perception);
+        packet.update_rate = this.level.compat.emulate_60fps ? 1 : 3;
         let tw = this.tileset.size_x;
         let th = this.tileset.size_y;
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -105,21 +156,11 @@ export class CanvasRenderer {
         // TODO what about levels smaller than the viewport...?  shrink the canvas in set_level?
         let xmargin = (this.viewport_size_x - 1) / 2;
         let ymargin = (this.viewport_size_y - 1) / 2;
-        let px, py;
-        // FIXME editor vs player
-        if (this.level.player) {
-            [px, py] = this.level.player.visual_position(tic_offset);
-        }
-        else {
-            [px, py] = [0, 0];
-        }
+        let [px, py] = this.level.player.visual_position(tic_offset, packet.update_rate);
         // Figure out where to start drawing
         // TODO support overlapping regions better
         let x0 = px - xmargin;
         let y0 = py - ymargin;
-        // FIXME editor vs player again ugh, which is goofy since none of this is even relevant;
-        // maybe need to have a separate positioning method
-        if (this.level.stored_level) {
         for (let region of this.level.stored_level.camera_regions) {
             if (px >= region.left && px < region.right &&
                 py >= region.top && py < region.bottom)
@@ -127,7 +168,6 @@ export class CanvasRenderer {
                 x0 = Math.max(region.left, Math.min(region.right - this.viewport_size_x, x0));
                 y0 = Math.max(region.top, Math.min(region.bottom - this.viewport_size_y, y0));
             }
-        }
         }
         // Always keep us within the map bounds
         x0 = Math.max(0, Math.min(this.level.size_x - this.viewport_size_x, x0));
@@ -152,71 +192,117 @@ export class CanvasRenderer {
         // include the tiles just outside it, so we allow this fencepost problem to fly
         let x1 = Math.min(this.level.size_x - 1, Math.ceil(x0 + this.viewport_size_x));
         let y1 = Math.min(this.level.size_y - 1, Math.ceil(y0 + this.viewport_size_y));
-        // Draw one layer at a time, so animated objects aren't overdrawn by
+        // Tiles in motion (i.e., actors) don't want to be overdrawn by neighboring tiles' terrain,
+        // so draw in three passes: everything below actors, actors, and everything above actors
         // neighboring terrain
-        // FIXME this is a bit inefficient when there are a lot of rarely-used layers; consider
-        // instead drawing everything under actors, then actors, then everything above actors?
-        // (note: will need to first fix the game to ensure everything is stacked correctly!)
-        for (let layer = 0; layer < DRAW_LAYERS.MAX; layer++) {
-            for (let x = xf0; x <= x1; x++) {
-                for (let y = yf0; y <= y1; y++) {
-                    let cell = this.level.cell(x, y);
-                    for (let tile of cell) {
-                        if (tile.type.draw_layer !== layer)
-                            continue;
+        for (let x = xf0; x <= x1; x++) {
+            for (let y = yf0; y <= y1; y++) {
+                let cell = this.level.cell(x, y);
+                for (let layer = 0; layer < LAYERS.actor; layer++) {
+                    let tile = cell[layer];
+                    if (! tile)
+                        continue;
 
-                        let vx, vy;
-                        if (tile.type.is_actor &&
-                            // FIXME kind of a hack for the editor, which uses bare tile objects
-                            tile.visual_position)
-                        {
-                            // Handle smooth scrolling
-                            [vx, vy] = tile.visual_position(tic_offset);
-                            // Round this to the pixel grid too!
-                            vx = Math.floor(vx * tw + 0.5) / tw;
-                            vy = Math.floor(vy * th + 0.5) / th;
-                        }
-                        else {
-                            // Non-actors can't move
-                            vx = x;
-                            vy = y;
-                        }
-
-                        // For actors (i.e., blocks), perception only applies if there's something
-                        // of potential interest underneath
-                        let perception = this.perception;
-                        if (perception !== 'normal' && tile.type.is_actor &&
-                            ! cell.some(t =>
-                                t.type.draw_layer < layer &&
-                                ! (t.type.name === 'floor' && (t.wire_directions | t.wire_tunnel_directions) === 0)))
-                        {
-                            perception = 'normal';
-                        }
-
-                        this.tileset.draw(
-                            tile, tic, perception,
-                            this._make_tileset_blitter(this.ctx, vx - x0, vy - y0));
-                    }
+                    packet.x = x - x0;
+                    packet.y = y - y0;
+                    this.tileset.draw(tile, packet);
                 }
             }
         }
+        for (let x = xf0; x <= x1; x++) {
+            for (let y = yf0; y <= y1; y++) {
+                let cell = this.level.cell(x, y);
+                let actor = cell[LAYERS.actor];
+                if (! actor)
+                    continue;
 
-        if (this.show_actor_bboxes && this.level.constructor.name === 'Level') {  // FIXME dumb hack so this doesn't happen in editor
-            this.ctx.fillStyle = '#f004';
-            for (let x = xf0; x <= x1; x++) {
-                for (let y = yf0; y <= y1; y++) {
-                    let actor = this.level.cell(x, y).get_actor();
-                    if (! actor)
+                // Handle smooth scrolling
+                let [vx, vy] = actor.visual_position(tic_offset, packet.update_rate);
+                // Round this to the pixel grid too!
+                vx = Math.floor(vx * tw + 0.5) / tw;
+                vy = Math.floor(vy * th + 0.5) / th;
+
+                // For blocks, perception only applies if there's something of interest underneath
+                if (this.perception !== 'normal' && actor.type.is_block &&
+                    ! cell.some(t => t && t.type.layer < LAYERS.actor && ! (
+                        t.type.name === 'floor' && (t.wire_directions | t.wire_tunnel_directions) === 0)))
+                {
+                    packet.perception = 'normal';
+                }
+                else {
+                    packet.perception = this.perception;
+                }
+
+                packet.x = x - x0;
+                packet.y = y - y0;
+                packet.offsetx = vx - x;
+                packet.offsety = vy - y;
+
+                // Draw the active player background
+                if (actor === this.active_player) {
+                    this.tileset.draw_type('#active-player-background', null, packet);
+                }
+
+                this.tileset.draw(actor, packet);
+            }
+        }
+        packet.perception = this.perception;
+        packet.offsetx = 0;
+        packet.offsety = 0;
+        for (let x = xf0; x <= x1; x++) {
+            for (let y = yf0; y <= y1; y++) {
+                let cell = this.level.cell(x, y);
+                for (let layer = LAYERS.actor + 1; layer < LAYERS.MAX; layer++) {
+                    let tile = cell[layer];
+                    if (! tile)
                         continue;
-                    let [vx, vy] = actor.visual_position(tic_offset);
-                    // Don't round to the pixel grid; we want to know if the bbox is misaligned!
-                    this.ctx.fillRect((vx - x0) * tw, (vy - y0) * th, 1 * tw, 1 * th);
+
+                    packet.x = x - x0;
+                    packet.y = y - y0;
+                    this.tileset.draw(tile, packet);
                 }
             }
         }
 
         if (this.use_rewind_effect) {
             this.draw_rewind_effect(tic);
+        }
+
+        // Debug overlays
+        if (this.show_actor_bboxes) {
+            this.ctx.fillStyle = '#f004';
+            for (let x = xf0; x <= x1; x++) {
+                for (let y = yf0; y <= y1; y++) {
+                    let actor = this.level.cell(x, y).get_actor();
+                    if (! actor)
+                        continue;
+                    let [vx, vy] = actor.visual_position(tic_offset, packet.update_rate);
+                    // Don't round to the pixel grid; we want to know if the bbox is misaligned!
+                    this.ctx.fillRect((vx - x0) * tw, (vy - y0) * th, 1 * tw, 1 * th);
+                }
+            }
+        }
+        if (this.show_actor_order) {
+            this.ctx.fillStyle = '#fff';
+            this.ctx.strokeStyle = '#000';
+            this.ctx.lineWidth = 3;
+            this.ctx.font = '16px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            for (let [n, actor] of this.level.actors.entries()) {
+                let cell = actor.cell;
+                if (! cell)
+                    continue;
+                if (cell.x < xf0 || cell.x > x1 || cell.y < yf0 || cell.y > y1)
+                    continue;
+
+                let [vx, vy] = actor.visual_position(tic_offset, packet.update_rate);
+                let x = (vx + 0.5 - x0) * tw;
+                let y = (vy + 0.5 - y0) * th;
+                let label = String(this.level.actors.length - 1 - n);
+                this.ctx.strokeText(label, x, y);
+                this.ctx.fillText(label, x, y);
+            }
         }
     }
 
@@ -234,11 +320,53 @@ export class CanvasRenderer {
         }
     }
 
+    // Used by the editor and map previews.  Draws a region of the level (probably a StoredLevel),
+    // assuming nothing is moving.
+    draw_static_region(x0, y0, x1, y1, destx = x0, desty = y0) {
+        this._adjust_viewport_if_dirty();
+
+        let packet = new CanvasRendererDrawPacket(this, this.ctx, 0.0, this.perception);
+        for (let x = x0; x <= x1; x++) {
+            for (let y = y0; y <= y1; y++) {
+                let cell = this.level.cell(x, y);
+                if (! cell)
+                    continue;
+
+                let seen_anything_interesting;
+                for (let tile of cell) {
+                    if (! tile)
+                        continue;
+
+                    // For actors (i.e., blocks), perception only applies if there's something
+                    // of potential interest underneath
+                    if (this.perception !== 'normal' && tile.type.is_block && ! seen_anything_interesting) {
+                        packet.perception = 'normal';
+                    }
+                    else {
+                        packet.perception = this.perception;
+                    }
+
+                    if (tile.type.layer < LAYERS.actor && ! (
+                        tile.type.name === 'floor' && (tile.wire_directions | tile.wire_tunnel_directions) === 0))
+                    {
+                        seen_anything_interesting = true;
+                    }
+
+                    packet.x = destx + x - x0;
+                    packet.y = desty + y - y0;
+                    this.tileset.draw(tile, packet);
+                }
+            }
+        }
+    }
+
     create_tile_type_canvas(name, tile = null) {
         let canvas = mk('canvas', {width: this.tileset.size_x, height: this.tileset.size_y});
         let ctx = canvas.getContext('2d');
+
         // Individual tile types always reveal what they are
-        this.tileset.draw_type(name, tile, 0, 'palette', this._make_tileset_blitter(ctx));
+        let packet = new CanvasRendererDrawPacket(this, ctx, 0.0, 'palette');
+        this.tileset.draw_type(name, tile, packet);
         return canvas;
     }
 }

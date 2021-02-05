@@ -1,38 +1,26 @@
 import { DIRECTIONS } from './defs.js';
 import TILE_TYPES from './tiletypes.js';
 
-// TODO really need to specify this format more concretely, whoof
-// XXX special kinds of drawing i know this has for a fact:
-// - letter tiles draw from a block (one of two blocks!) of half-tiles onto the center of the base
-// - force floors are cropped from a double-size tile
-// - wired tiles are a whole thing (floor)
-// - thin walls are packed into just two tiles
-// - directional blocks have arrows in an awkward layout, not 4x4 grid but actually positioned on the edges
-// - green and purple toggle walls use an overlay
-// - turtles use an overlay, seem to pick a tile at random every so often
-// - animations are common, should maybe have configurable timing??
-// - custom floors and walls /should/ be consolidated into a single tile probably
-// - thin walls should probably be consolidated?
-// - traps have a state
+const _omit_custom_lexy_vfx = {
+    teleport_flash: null,
+    transmogrify_flash: null,
+    puff: null,
+};
 
-// special features i currently have
-// - directions for actors, can be used anywhere
-// - arrows: for directional blocks
-// - wired: for wired tiles
-// - overlay: for green/purple walls mostly, also some bogus cc1 tiles
-
-// things that are currently NOT handled
-// - bomb is supposed to have a fuse
-// - critters should only animate when moving
-// - rover animation depends on behavior, also has a quarter-tile overlay for its direction
-// - slime and walkers have double-size tiles when moving
-// - logic gates draw over the stuff underneath them
-// - railroad tracks overlay a Lot
-// - canopy, at all
-// - swivel's floor (eugh)
-// - xray vision
-// - editor vision
+// TODO move the remaining stuff (arrows, overlay i think, probably force floor thing) into specials
+// TODO more explicitly define animations, give them a speed!  maybe fold directions into it
+// TODO relatedly, the push animations are sometimes glitchy depending on when you start?
+// TODO animate swimming player always
+// TODO life might be easier if i used the lynx-style loop with cooldown at the end
+// TODO define a draw state object to pass into here; need it for making turtles work right, fixing
+// blur with cc2 blobs/walkers, also makes a lot of signatures cleaner (make sure not slower)
+// TODO monsters should only animate while moving?  (not actually how cc2 works...)
 export const CC2_TILESET_LAYOUT = {
+    '#ident': 'cc2',
+    '#name': "Chip's Challenge 2",
+    '#dimensions': [16, 32],
+    '#transparent-color': [0x52, 0xce, 0x6b, 0xff],
+    '#supported-versions': new Set(['cc1', 'cc2']),
     '#wire-width': 1/16,
 
     door_red: [0, 1],
@@ -44,7 +32,7 @@ export const CC2_TILESET_LAYOUT = {
     key_yellow: [6, 1],
     key_green: [7, 1],
     dirt_block: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['editor', 'xray']),
         hidden: [8, 1],
         revealed: [9, 1],
@@ -58,13 +46,14 @@ export const CC2_TILESET_LAYOUT = {
 
     floor: {
         // Wiring!
+        __special__: 'wires',
         base: [0, 2],
         wired: [8, 26],
         wired_cross: [10, 26],
         is_wired_optional: true,
     },
     wall_invisible: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['palette', 'editor', 'xray']),
         hidden: [0, 2],
         revealed: [9, 31],
@@ -72,14 +61,14 @@ export const CC2_TILESET_LAYOUT = {
     // FIXME this shouldn't be visible with seeing eye (or should it not spawn at all?)
     wall_invisible_revealed: [1, 2],
     wall_appearing: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['palette', 'editor', 'xray']),
         hidden: [0, 2],
         revealed: [11, 31],
     },
     wall: [1, 2],
     floor_letter: {
-        special: 'letter',
+        __special__: 'letter',
         base: [2, 2],
         letter_glyphs: {
             // Arrows
@@ -108,7 +97,7 @@ export const CC2_TILESET_LAYOUT = {
         [9, 2],
     ],
     ice_block: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['editor', 'xray']),
         hidden: [10, 2],
         revealed: [11, 2],
@@ -121,7 +110,7 @@ export const CC2_TILESET_LAYOUT = {
     // LCD digit font
     green_chip: [9, 3],
     chip_extra: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['palette', 'editor']),
         hidden: [11, 3],
         revealed: [10, 3],
@@ -130,18 +119,31 @@ export const CC2_TILESET_LAYOUT = {
     bribe: [12, 3],
     speed_boots: [13, 3],
     canopy: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['editor', 'xray']),
         hidden: [14, 3],
         revealed: [15, 3],
     },
 
     dynamite: [0, 4],
-    // FIXME lit frames
-    dynamite_lit: [0, 4],
-    bomb: [5, 4],
-    green_bomb: [6, 4],
-    // TODO bomb fuse tile, ugh
+    dynamite_lit: {
+        __special__: 'visual-state',
+        0: [0, 4],
+        1: [1, 4],
+        2: [2, 4],
+        3: [3, 4],
+        4: [4, 4],
+    },
+    bomb: {
+        __special__: 'bomb-fuse',
+        bomb: [5, 4],
+        fuse: [7, 4],
+    },
+    green_bomb: {
+        __special__: 'bomb-fuse',
+        bomb: [6, 4],
+        fuse: [7, 4],
+    },
     floor_custom_green: [8, 4],
     floor_custom_pink: [9, 4],
     floor_custom_yellow: [10, 4],
@@ -158,14 +160,18 @@ export const CC2_TILESET_LAYOUT = {
     flame_jet_on: [[9, 5], [10, 5], [11, 5]],
     popdown_wall: [12, 5],
     popdown_floor: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['palette', 'editor', 'xray']),
-        hidden: [12, 5],
+        hidden: {
+            __special__: 'visual-state',
+            depressed: [13, 5],
+            normal: [12, 5],
+        },
         revealed: [13, 5],
     },
-    popdown_floor_visible: [13, 5],
     no_sign: [14, 5],
     frame_block: {
+        __special__: 'arrows',
         base: [15, 5],
         arrows: [3, 10],
     },
@@ -176,13 +182,15 @@ export const CC2_TILESET_LAYOUT = {
     suction_boots: [3, 6],
     hiking_boots: [4, 6],
     lightning_bolt: [5, 6],
-    // FIXME draw the current player background...  more external state for the renderer though...
+    '#active-player-background': [6, 6],
     // TODO dopps can push but i don't think they have any other visuals
     doppelganger1: {
+        __special__: 'overlay',
         base: [7, 6],
         overlay: 'player',
     },
     doppelganger2: {
+        __special__: 'overlay',
         base: [7, 6],
         overlay: 'player2',
     },
@@ -191,10 +199,12 @@ export const CC2_TILESET_LAYOUT = {
     button_red: [10, 6],
     button_brown: [11, 6],
     button_pink: {
+        __special__: 'wires',
         base: [0, 2],
         wired: [12, 6],
     },
     button_black: {
+        __special__: 'wires',
         base: [0, 2],
         wired: [13, 6],
     },
@@ -225,14 +235,17 @@ export const CC2_TILESET_LAYOUT = {
     green_floor: [[0, 9], [1, 9], [2, 9], [3, 9]],
     purple_floor: [[4, 9], [5, 9], [6, 9], [7, 9]],
     green_wall: {
+        __special__: 'overlay',
         base: 'green_floor',
         overlay: [8, 9],
     },
     purple_wall: {
+        __special__: 'overlay',
         base: 'purple_floor',
         overlay: [8, 9],
     },
     trap: {
+        __special__: 'visual-state',
         closed: [9, 9],
         open: [10, 9],
     },
@@ -245,19 +258,19 @@ export const CC2_TILESET_LAYOUT = {
 
     fake_wall: [0, 10],
     fake_floor: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['palette', 'editor', 'xray']),
         hidden: [0, 10],
         revealed: [10, 31],
     },
     // Thin walls are built piecemeal from two tiles; the first is N/S, the second is E/W
     thin_walls: {
-        special: 'thin_walls',
+        __special__: 'thin_walls',
         thin_walls_ns: [1, 10],
         thin_walls_ew: [2, 10],
     },
-    // TODO directional block arrows
     teleport_blue: {
+        __special__: 'wires',
         base: [0, 2],
         wired: [[4, 10], [5, 10], [6, 10], [7, 10]],
     },
@@ -275,6 +288,7 @@ export const CC2_TILESET_LAYOUT = {
     ],
     steel: {
         // Wiring!
+        __special__: 'wires',
         base: [15, 10],
         wired: [9, 26],
         wired_cross: [11, 26],
@@ -308,26 +322,35 @@ export const CC2_TILESET_LAYOUT = {
     foil: [12, 12],
     turtle: {
         // Turtles draw atop fake water, but don't act like water otherwise
-        overlay: [13, 12],  // TODO also 14 + 15 for sinking
+        __special__: 'overlay',
+        overlay: [13, 12],  // TODO also 14 + 15, bobbing pseudorandomly
         base: 'water',
     },
 
-    walker: [0, 13],
-    // FIXME walker animations span multiple tiles
+    walker: {
+        __special__: 'double-size-monster',
+        base: [0, 13],
+        vertical: [[1, 13], [2, 13], [3, 13], [4, 13], [5, 13], [6, 13], [7, 13]],
+        horizontal: [[8, 13], [10, 13], [12, 13], [14, 13], [8, 14], [10, 14], [12, 14]],
+    },
     helmet: [0, 14],
     stopwatch_toggle: [14, 14],
     stopwatch_bonus: [15, 14],
 
-    blob: [0, 15],
-    // FIXME blob animations span multiple tiles
-    // TODO [0, 16] some kinda red/blue outline
+    blob: {
+        __special__: 'double-size-monster',
+        base: [0, 15],
+        vertical: [[1, 15], [2, 15], [3, 15], [4, 15], [5, 15], [6, 15], [7, 15]],
+        horizontal: [[8, 15], [10, 15], [12, 15], [14, 15], [8, 16], [10, 16], [12, 16]],
+    },
+    // (cc2 editor copy/paste outline)
     floor_mimic: {
-        special: 'perception',
+        __special__: 'perception',
         modes: new Set(['palette', 'editor', 'xray']),
         hidden: [0, 2],
         revealed: [14, 16],
     },
-    // TODO [15, 16] some kinda yellow/black outline
+    // (cc2 editor cursor outline)
 
     // timid teeth
     teeth_timid: {
@@ -347,24 +370,27 @@ export const CC2_TILESET_LAYOUT = {
         west: [[14, 17], [15, 17]],
     },
 
-    // TODO rover has an overlay showing its direction
     rover: {
+        __special__: 'rover',
+        direction: [10, 18],
         inert: [0, 18],
         teeth: [[0, 18], [8, 18]],
-        glider: [
-            // quite fast
-            [0, 18], [1, 18], [2, 18], [3, 18], [4, 18], [5, 18], [6, 18], [7, 18],
-            [0, 18], [1, 18], [2, 18], [3, 18], [4, 18], [5, 18], [6, 18], [7, 18],
+        // cw, slow
+        glider: [[0, 18], [1, 18], [2, 18], [3, 18], [4, 18], [5, 18], [6, 18], [7, 18]],
+        // ccw, fast
+        bug: [
+            [7, 18], [6, 18], [5, 18], [4, 18], [3, 18], [2, 18], [1, 18], [0, 18],
+            [7, 18], [6, 18], [5, 18], [4, 18], [3, 18], [2, 18], [1, 18], [0, 18],
         ],
-        bug: [[0, 18], [1, 18], [2, 18], [3, 18], [4, 18], [5, 18], [6, 18], [7, 18]],
         ball: [[0, 18], [4, 18]],
         teeth_timid: [[0, 18], [9, 18]],
-        fireball: [
-            // quite fast
-            [7, 18], [6, 18], [5, 18], [4, 18], [3, 18], [2, 18], [1, 18], [0, 18],
-            [7, 18], [6, 18], [5, 18], [4, 18], [3, 18], [2, 18], [1, 18], [0, 18],
+        // ccw, slow
+        fireball: [[7, 18], [6, 18], [5, 18], [4, 18], [3, 18], [2, 18], [1, 18], [0, 18]],
+        // cw, fast
+        paramecium: [
+            [0, 18], [1, 18], [2, 18], [3, 18], [4, 18], [5, 18], [6, 18], [7, 18],
+            [0, 18], [1, 18], [2, 18], [3, 18], [4, 18], [5, 18], [6, 18], [7, 18],
         ],
-        paramecium: [[7, 18], [6, 18], [5, 18], [4, 18], [3, 18], [2, 18], [1, 18], [0, 18]],
         walker: [[8, 18], [9, 18]],
     },
     xray_eye: [11, 18],
@@ -376,62 +402,78 @@ export const CC2_TILESET_LAYOUT = {
     },
 
     force_floor_n: {
+        __special__: 'scroll',
         base: [0, 19],
-        animate_height: 1,
+        scroll_region: [0, 1],
     },
     force_floor_e: {
+        __special__: 'scroll',
         base: [3, 19],
-        animate_width: -1,
+        scroll_region: [-1, 0],
     },
     force_floor_s: {
+        __special__: 'scroll',
         base: [1, 20],
-        animate_height: -1,
+        scroll_region: [0, -1],
     },
     force_floor_w: {
+        __special__: 'scroll',
         base: [2, 20],
-        animate_width: 1,
+        scroll_region: [1, 0],
     },
     teleport_green: [[4, 19], [5, 19], [6, 19], [7, 19]],
     teleport_yellow: [[8, 19], [9, 19], [10, 19], [11, 19]],
-    transmogrifier: [[12, 19], [13, 19], [14, 19], [15, 19]],
+    transmogrifier: {
+        __special__: 'visual-state',
+        active: [[12, 19], [13, 19], [14, 19], [15, 19]],
+        inactive: [12, 19],
+    },
     teleport_red: {
+        __special__: 'wires',
         base: [0, 2],
-        wired: [[4, 20], [5, 20], [6, 20], [7, 20]],
+        wired: {
+            __special__: 'visual-state',
+            active: [[4, 20], [5, 20], [6, 20], [7, 20]],
+            inactive: [4, 20],
+        },
     },
     slime: [[8, 20], [9, 20], [10, 20], [11, 20], [12, 20], [13, 20], [14, 20], [15, 20]],
 
     force_floor_all: [[0, 21], [1, 21], [2, 21], [3, 21], [4, 21], [5, 21], [6, 21], [7, 21]],
     // latches
     light_switch_off: {
+        __special__: 'wires',
         base: [14, 21],
         wired: [12, 21],
     },
     light_switch_on: {
+        __special__: 'wires',
         base: [14, 21],
         wired: [13, 21],
     },
     thief_keys: [15, 21],
 
     player: {
+        __special__: 'visual-state',
         normal: {
             north: [0, 22],
             south: [0, 23],
             west: [8, 23],
             east: [8, 22],
         },
-        blocked: 'pushing',
+        blocked: {
+            north: [8, 24],
+            east: [9, 24],
+            south: [10, 24],
+            west: [11, 24],
+        },
         moving: {
             north: [[0, 22], [1, 22], [2, 22], [3, 22], [4, 22], [5, 22], [6, 22], [7, 22]],
             east: [[8, 22], [9, 22], [10, 22], [11, 22], [12, 22], [13, 22], [14, 22], [15, 22]],
             south: [[0, 23], [1, 23], [2, 23], [3, 23], [4, 23], [5, 23], [6, 23], [7, 23]],
             west: [[8, 23], [9, 23], [10, 23], [11, 23], [12, 23], [13, 23], [14, 23], [15, 23]],
         },
-        pushing: {
-            north: [8, 24],
-            east: [9, 24],
-            south: [10, 24],
-            west: [11, 24],
-        },
+        pushing: 'blocked',
         swimming: {
             north: [[0, 24], [1, 24]],
             east: [[2, 24], [3, 24]],
@@ -458,6 +500,7 @@ export const CC2_TILESET_LAYOUT = {
     // Do a quick spin I guess??
     player1_exit: [[0, 22], [8, 22], [0, 23], [8, 23]],
     bogus_player_win: {
+        __special__: 'overlay',
         overlay: [0, 23],
         base: 'exit',
     },
@@ -468,14 +511,17 @@ export const CC2_TILESET_LAYOUT = {
         west: [[6, 24], [7, 24]],
     },
     bogus_player_drowned: {
+        __special__: 'overlay',
         overlay: [5, 5],  // splash
         base: 'water',
     },
     bogus_player_burned_fire: {
+        __special__: 'overlay',
         overlay: [2, 5],  // explosion frame 3
         base: 'fire',
     },
     bogus_player_burned: {
+        __special__: 'overlay',
         overlay: [2, 5],  // explosion frame 3
         base: 'floor',
     },
@@ -487,7 +533,7 @@ export const CC2_TILESET_LAYOUT = {
     ],
 
     logic_gate: {
-        special: 'logic-gate',
+        __special__: 'logic-gate',
         logic_gate_tiles: {
             'latch-ccw': {
                 north: [8, 21],
@@ -539,6 +585,7 @@ export const CC2_TILESET_LAYOUT = {
     '#powered': [15, 26],
 
     player2: {
+        __special__: 'visual-state',
         normal: {
             north: [0, 27],
             south: [0, 28],
@@ -589,9 +636,8 @@ export const CC2_TILESET_LAYOUT = {
         [15, 29],
     ],
 
-    // TODO handle train tracks!  this is gonna be complicated.
     railroad: {
-        special: 'railroad',
+        __special__: 'railroad',
         base: [9, 10],
         railroad_ties: {
             ne: [0, 30],
@@ -625,10 +671,16 @@ export const CC2_TILESET_LAYOUT = {
     no_player1_sign: [6, 31],
     hook: [7, 31],
     // misc other stuff
+
+    ..._omit_custom_lexy_vfx,
 };
 
-// XXX need to specify that you can't use this for cc2 levels, somehow
 export const TILE_WORLD_TILESET_LAYOUT = {
+    '#ident': 'tw-static',
+    '#name': "Tile World (static)",
+    '#dimensions': [7, 16],
+    '#transparent-color': [0xff, 0x00, 0xff, 0xff],
+    '#supported-versions': new Set(['cc1']),
     floor: [0, 0],
     wall: [0, 1],
     chip: [0, 2],
@@ -638,7 +690,7 @@ export const TILE_WORLD_TILESET_LAYOUT = {
     wall_invisible_revealed: [0, 1],
     // FIXME in cc1 tilesets these are opaque so they should draw at the terrain layer
     thin_walls: {
-        special: 'thin_walls_cc1',
+        __special__: 'thin_walls_cc1',
         north: [0, 6],
         west: [0, 7],
         south: [0, 8],
@@ -684,6 +736,7 @@ export const TILE_WORLD_TILESET_LAYOUT = {
     teleport_blue: [2, 9],
     bomb: [2, 10],
     trap: {
+        __special__: 'visual-state',
         closed: [2, 11],
         open: [2, 11],
     },
@@ -775,6 +828,7 @@ export const TILE_WORLD_TILESET_LAYOUT = {
     cleats: [6, 10],
     suction_boots: [6, 11],
     player: {
+        __special__: 'visual-state',
         normal: {
             north: [6, 12],
             south: [6, 14],
@@ -796,9 +850,16 @@ export const TILE_WORLD_TILESET_LAYOUT = {
         exploded: [3, 6],
         failed: [3, 7],
     },
+
+    ..._omit_custom_lexy_vfx,
 };
 
 export const LL_TILESET_LAYOUT = Object.assign({}, CC2_TILESET_LAYOUT, {
+    '#ident': 'lexy',
+    '#name': "Lexy's Labyrinth",
+    // TODO dimensions, when this is stable??  might one day rearrange, leave some extra space
+    '#supported-versions': new Set(['cc1', 'cc2', 'll']),
+
     // Completed teeth sprites
     teeth: Object.assign({}, CC2_TILESET_LAYOUT.teeth, {
         north: [[1, 32], [0, 32], [1, 32], [2, 32]],
@@ -812,6 +873,13 @@ export const LL_TILESET_LAYOUT = Object.assign({}, CC2_TILESET_LAYOUT, {
 
     // Extra player sprites
     player: Object.assign({}, CC2_TILESET_LAYOUT.player, {
+        __special__: 'visual-state',
+        pushing: {
+            north: [[8, 24], [0, 34], [8, 24], [1, 34]],
+            east: [[9, 24], [2, 34], [9, 24], [3, 34]],
+            south: [[10, 24], [4, 34], [10, 24], [5, 34]],
+            west: [[11, 24], [6, 34], [11, 24], [7, 34]],
+        },
         skating: {
             north: [0, 33],
             east: [1, 33],
@@ -829,7 +897,20 @@ export const LL_TILESET_LAYOUT = Object.assign({}, CC2_TILESET_LAYOUT, {
         slimed: [1, 38],
     }),
     player2: Object.assign({}, CC2_TILESET_LAYOUT.player2, {
-        // TODO skating
+        __special__: 'visual-state',
+        pushing: {
+            north: [[8, 29], [8, 34], [8, 29], [9, 34]],
+            east: [[9, 29], [10, 34], [9, 29], [11, 34]],
+            south: [[10, 29], [12, 34], [10, 29], [13, 34]],
+            west: [[11, 29], [14, 34], [11, 29], [15, 34]],
+        },
+        skating: {
+            north: [8, 33],
+            east: [9, 33],
+            south: [10, 33],
+            west: [11, 33],
+        },
+        forced: 'skating',
         exited: [15, 32],
         burned: {
             north: [12, 33],
@@ -840,10 +921,12 @@ export const LL_TILESET_LAYOUT = Object.assign({}, CC2_TILESET_LAYOUT, {
         slimed: [1, 38],
     }),
     bogus_player_burned_fire: {
+        __special__: 'overlay',
         overlay: [6, 33],
         base: 'fire',
     },
     bogus_player_burned: {
+        __special__: 'overlay',
         overlay: [6, 33],
         base: 'floor',
     },
@@ -852,6 +935,7 @@ export const LL_TILESET_LAYOUT = Object.assign({}, CC2_TILESET_LAYOUT, {
     popwall2: [9, 32],
     gift_bow: [10, 32],
     circuit_block: {
+        __special__: 'wires',
         base: [13, 32],
         wired: [11, 32],
         wired_cross: [12, 32],
@@ -871,26 +955,118 @@ export const LL_TILESET_LAYOUT = Object.assign({}, CC2_TILESET_LAYOUT, {
         south: [[2, 37], [1, 37], [0, 37], [3, 37]],
         west: [[6, 37], [5, 37], [4, 37], [7, 37]],
     },
+    // Pressed buttons
+    button_blue: {
+        __special__: 'visual-state',
+        released: [8, 6],
+        pressed: [8, 37],
+    },
+    button_green: {
+        __special__: 'visual-state',
+        released: [9, 6],
+        pressed: [9, 37],
+    },
+    button_red: {
+        __special__: 'visual-state',
+        released: [10, 6],
+        pressed: [10, 37],
+    },
+    button_brown: {
+        __special__: 'visual-state',
+        released: [11, 6],
+        pressed: [11, 37],
+    },
+    button_pink: {
+        __special__: 'wires',
+        base: [0, 2],
+        wired: {
+            __special__: 'visual-state',
+            released: [12, 6],
+            pressed: [12, 37],
+        },
+    },
+    button_black: {
+        __special__: 'wires',
+        __special__: 'wires',
+        base: [0, 2],
+        wired: {
+            __special__: 'visual-state',
+            released: [13, 6],
+            pressed: [13, 37],
+        },
+    },
+    button_orange: {
+        __special__: 'visual-state',
+        released: [14, 6],
+        pressed: [14, 37],
+    },
+    button_gray: {
+        __special__: 'visual-state',
+        released: [11, 9],
+        pressed: [15, 37],
+    },
 
     // Custom VFX
     splash_slime: [[0, 38], [1, 38], [2, 38], [3, 38]],
     teleport_flash: [[4, 38], [5, 38], [6, 38], [7, 38]],
+    chip_extra: {
+        __special__: 'perception',
+        modes: new Set(['palette', 'editor']),
+        hidden: [[11, 3], [0, 39], [1, 39], [0, 39]],
+        revealed: [10, 3],
+    },
+    chip: [[11, 3], [0, 39], [1, 39], [0, 39]],
+    green_chip: [[9, 3], [2, 39], [3, 39], [2, 39]],
     player1_exit: [[8, 38], [9, 38], [10, 38], [11, 38]],
     player2_exit: [[12, 38], [13, 38], [14, 38], [15, 38]],
+    puff: [[4, 39], [5, 39], [6, 39], [7, 39]],
+    transmogrify_flash: [[8, 39], [9, 39], [10, 39], [11, 39], [12, 39], [13, 39], [14, 39], [15, 39]],
 
     // More custom tiles
-    gate_red: [0, 39],
-    gate_blue: [1, 39],
-    gate_yellow: [2, 39],
-    gate_green: [3, 39],
+    gate_red: [0, 40],
+    gate_blue: [1, 40],
+    gate_yellow: [2, 40],
+    gate_green: [3, 40],
 
-    skeleton_key: [4, 39],
+    skeleton_key: [4, 40],
 
-    sand: [10, 40],
+    sand: [10, 41],
 });
+
+export const TILESET_LAYOUTS = {
+    'tw-static': TILE_WORLD_TILESET_LAYOUT,
+    cc2: CC2_TILESET_LAYOUT,
+    lexy: LL_TILESET_LAYOUT,
+};
+
+
+// Bundle of arguments for drawing a tile, containing some standard state about the game
+export class DrawPacket {
+    constructor(tic = 0, perception = 'normal') {
+        this.tic = tic;
+        this.perception = perception;
+
+        // Distinguishes between interpolation of 20tps and 60fps; 3 means 20tps, 1 means 60fps
+        // XXX this isn't actually about update /rate/; it's about how many "frames" of cooldown
+        // pass between a decision and the end of a tic
+        this.update_rate = 3;
+    }
+
+    // Draw a tile (or region) from the tileset.  The caller is presumed to know where the tile
+    // goes, so the arguments here are only about how to find the tile on the sheet.
+    // tx, ty: Tile coordinates (from the tileset, measured in cells)
+    // mx, my, mw, mh: Optional mask to use for drawing a subset of a tile (or occasionally tiles)
+    // mdx, mdy: Where to draw the masked part; defaults to drawing aligned with the tile
+    blit(tx, ty, mx = 0, my = 0, mw = 1, mh = mw, mdx = mx, mdy = my) {}
+
+    // Same, but do not interpolate the position of an actor in motion; always draw it exactly in
+    // the cell it claims to be in
+    blit_aligned(tx, ty, mx = 0, my = 0, mw = 1, mh = mw, mdx = mx, mdy = my) {}
+}
 
 export class Tileset {
     constructor(image, layout, size_x, size_y) {
+        // XXX curiously, i note that .image is never used within this class
         this.image = image;
         this.layout = layout;
         this.size_x = size_x;
@@ -898,15 +1074,33 @@ export class Tileset {
         this.animation_slowdown = 2;
     }
 
-    draw(tile, tic, perception, blit) {
-        this.draw_type(tile.type.name, tile, tic, perception, blit);
+    draw(tile, packet) {
+        this.draw_type(tile.type.name, tile, packet);
+    }
+
+    // Draws a tile type, given by name.  Passing in a tile is optional, but
+    // without it you'll get defaults.
+    draw_type(name, tile, packet) {
+        let drawspec = this.layout[name];
+        if (drawspec === null) {
+            // This is explicitly never drawn (used for extra visual-only frills that don't exist in
+            // some tilesets)
+            return;
+        }
+        if (! drawspec) {
+            // This is just missing
+            console.error(`Don't know how to draw tile type ${name}!`);
+            return;
+        }
+
+        this.draw_drawspec(drawspec, name, tile, packet);
     }
 
     // Draw a "standard" drawspec, which is either:
     // - a single tile: [x, y]
     // - an animation: [[x0, y0], [x1, y1], ...]
     // - a directional tile: { north: T, east: T, ... } where T is either of the above
-    _draw_standard(drawspec, tile, tic, blit, mask = []) {
+    _draw_standard(drawspec, name, tile, packet) {
         // If we have an object, it must be a table of directions
         let coords = drawspec;
         if (!(coords instanceof Array)) {
@@ -915,173 +1109,155 @@ export class Tileset {
 
         // Deal with animation
         if (coords[0] instanceof Array) {
-            if (tic !== null) {
-                if (tile && tile.movement_speed) {
-                    // This tile reports its own animation timing (in frames), so trust that, and
-                    // just use the current tic's fraction.
-                    // That said: adjusting animation speed complicates this slightly.  Consider the
-                    // player's walk animation, which takes 4 tics to complete, during which time we
-                    // cycle through 8 frames.  Playing that at half speed means only half the
-                    // animation actually plays, but if the player continues walking, then on the
-                    // NEXT four tics, we should play the other half.  To make this work, use the
-                    // tic as a global timer as well: if the animation started on tics 0-4, play the
-                    // first half; if it started on tics 5-8, play the second half.  They could get
-                    // out of sync if the player hesitates, but no one will notice that, and this
-                    // approach minimizes storing extra state.
-                    let i = ((tile.movement_speed - tile.movement_cooldown) + tic % 1 * 3) / tile.movement_speed;
-                    // FIXME hack for cc2 mode, the only place we can see a cooldown of 0 which
-                    // makes i be 1
-                    i = Math.min(0.999, i);
-                    // But do NOT do this for explosions or splashes, which have a fixed duration
-                    // and only play once
-                    if (this.animation_slowdown > 1 && ! tile.type.ttl) {
-                        // i ranges from [0, 1), but a slowdown of N means we'll only play the first
-                        // 1/N of it before the game ends (or loops) the animation.
-                        // So increase by [0..N-1] to get it in some other range, then divide by N
-                        // to scale back down to [0, 1)
-                        i += Math.floor(tic * 3 / tile.movement_speed % this.animation_slowdown);
-                        i /= this.animation_slowdown;
-                    }
-                    coords = coords[Math.floor(i * coords.length)];
+            if (tile && tile.movement_speed) {
+                // This tile reports its own animation timing (in frames), so trust that, and use
+                // the current tic's fraction.  If we're between tics, interpolate.
+                // FIXME if the game ever runs every frame we will have to adjust the interpolation
+                let p = tile.movement_progress(packet.tic % 1, packet.update_rate);
+                if (this.animation_slowdown > 1 && ! tile.type.ttl) {
+                    // The players have full walk animations, but they look very silly when squeezed
+                    // into the span of a single step, so instead we only play half at a time.  The
+                    // halves alternate, so the player still sees the whole animation when walking
+                    // continuously.  To make this work, consider: p, the current progress through
+                    // the animation, is in [0, 1).  To play the first half, we want [0, 0.5); to
+                    // play the second half, we want [0.5, 1).  Thus we add an integer in [0, 2) to
+                    // offset us into which half to play, then divide by 2 to renormalize.
+                    // Which half to use is determined by when the animation /started/, as measured
+                    // in animation lengths.
+                    let start_time = (packet.tic * 3 / tile.movement_speed) - p;
+                    // Rounding smooths out float error (assuming the framerate never exceeds 1000)
+                    let segment = Math.floor(Math.round(start_time * 1000) / 1000 % this.animation_slowdown);
+                    p = (p + segment) / this.animation_slowdown;
                 }
-                else if (tile && tile.type.movement_speed) {
-                    // This is an actor that's not moving, so use the first frame
-                    coords = coords[0];
+                // Lexy runs cooldown from S to 1; CC2 from S-1 to 0.  0 is bad, because p becomes 1
+                // and will overflow the cel lookup
+                // FIXME handle this better!  it happens even to lexy
+                if (p >= 1) {
+                    p = 0.999;
                 }
-                else {
-                    // This tile animates on a global timer, one cycle every quarter of a second
-                    coords = coords[Math.floor(tic / this.animation_slowdown % 5 / 5 * coords.length)];
-                }
+                coords = coords[Math.floor(p * coords.length)];
             }
-            else {
+            else if (tile && tile.type.movement_speed) {
+                // This is an actor that's not moving, so use the first frame
                 coords = coords[0];
             }
-        }
-
-        blit(coords[0], coords[1], ...mask);
-    }
-
-    _draw_letter(drawspec, tile, tic, blit) {
-        this._draw_standard(drawspec.base, tile, tic, blit);
-
-        let glyph = tile ? tile.overlaid_glyph : "?";
-        if (drawspec.letter_glyphs[glyph]) {
-            let [x, y] = drawspec.letter_glyphs[glyph];
-            // XXX size is hardcoded here, but not below, meh
-            blit(x, y, 0, 0, 0.5, 0.5, 0.25, 0.25);
-        }
-        else {
-            // Look for a range
-            let u = glyph.charCodeAt(0);
-            for (let rangedef of drawspec.letter_ranges) {
-                if (rangedef.range[0] <= u && u < rangedef.range[1]) {
-                    let t = u - rangedef.range[0];
-                    let x = rangedef.x0 + rangedef.w * (t % rangedef.columns);
-                    let y = rangedef.y0 + rangedef.h * Math.floor(t / rangedef.columns);
-                    blit(x, y, 0, 0, rangedef.w, rangedef.h,
-                        (1 - rangedef.w) / 2, (1 - rangedef.h) / 2);
-                    break;
-                }
+            else {
+                // This tile animates on a global timer, one cycle every quarter of a second
+                coords = coords[Math.floor(packet.tic / this.animation_slowdown % 5 / 5 * coords.length)];
             }
         }
+
+        packet.blit(coords[0], coords[1]);
     }
 
-    _draw_thin_walls(drawspec, tile, tic, blit) {
-        let edges = tile ? tile.edges : 0x0f;
-
-        // TODO it would be /extremely/ cool to join corners diagonally, but i can't do that without
-        // access to the context, which defeats the whole purpose of this scheme.  damn
-        if (edges & DIRECTIONS['north'].bit) {
-            blit(...drawspec.thin_walls_ns, 0, 0, 1, 0.5);
-        }
-        if (edges & DIRECTIONS['east'].bit) {
-            blit(...drawspec.thin_walls_ew, 0.5, 0, 0.5, 1);
-        }
-        if (edges & DIRECTIONS['south'].bit) {
-            blit(...drawspec.thin_walls_ns, 0, 0.5, 1, 0.5);
-        }
-        if (edges & DIRECTIONS['west'].bit) {
-            blit(...drawspec.thin_walls_ew, 0, 0, 0.5, 1);
-        }
-    }
-
-    _draw_thin_walls_cc1(drawspec, tile, tic, blit) {
-        let edges = tile ? tile.edges : 0x0f;
-
-        // This is kinda best-effort since the tiles are opaque and not designed to combine
-        if (edges === (DIRECTIONS['south'].bit | DIRECTIONS['east'].bit)) {
-            blit(...drawspec.southeast);
-        }
-        else if (edges & DIRECTIONS['north'].bit) {
-            blit(...drawspec.north);
-        }
-        else if (edges & DIRECTIONS['east'].bit) {
-            blit(...drawspec.east);
-        }
-        else if (edges & DIRECTIONS['south'].bit) {
-            blit(...drawspec.south);
+    // Simple overlaying used for green/purple toggle tiles and doppelgangers.  Draw the base (a
+    // type name or drawspec), then draw the overlay (either a type name or a regular draw spec).
+    _draw_overlay(drawspec, name, tile, packet) {
+        // TODO chance of infinite recursion here
+        if (typeof drawspec.base === 'string') {
+            this.draw_type(drawspec.base, tile, packet);
         }
         else {
-            blit(...drawspec.west);
+            this.draw_drawspec(drawspec.base, name, tile, packet);
+        }
+        if (typeof drawspec.overlay === 'string') {
+            this.draw_type(drawspec.overlay, tile, packet);
+        }
+        else {
+            this.draw_drawspec(drawspec.overlay, name, tile, packet);
         }
     }
 
-    _draw_logic_gate(drawspec, tile, tic, blit) {
-        // Layer 1: wiring state
-        // Always draw the unpowered wire base
-        let unpowered_coords = this.layout['#unpowered'];
-        let powered_coords = this.layout['#powered'];
-        blit(...unpowered_coords);
-        if (tile && tile.cell) {
-            // What goes on top varies a bit...
-            let r = this.layout['#wire-width'] / 2;
-            if (tile.gate_type === 'not' || tile.gate_type === 'counter') {
-                this._draw_fourway_tile_power(tile, 0x0f, blit);
+    // Scrolling region, used for force floors
+    _draw_scroll(drawspec, name, tile, packet) {
+        let [x, y] = drawspec.base;
+        let duration = 3 * this.animation_slowdown;
+        x += drawspec.scroll_region[0] * (packet.tic % duration / duration);
+        y += drawspec.scroll_region[1] * (packet.tic % duration / duration);
+        // Round to pixels
+        x = Math.floor(x * this.size_x + 0.5) / this.size_x;
+        y = Math.floor(y * this.size_y + 0.5) / this.size_y;
+        packet.blit(x, y);
+    }
+
+    _draw_wires(drawspec, name, tile, packet) {
+        // This /should/ match CC2's draw order exactly, based on experimentation
+        let wire_radius = this.layout['#wire-width'] / 2;
+        // TODO circuit block with a lightning bolt is always powered
+        // TODO circuit block in motion doesn't inherit cell's power
+        if (tile && tile.wire_directions) {
+            // Draw the base tile
+            packet.blit(drawspec.base[0], drawspec.base[1]);
+
+            let is_crossed = (tile.wire_directions === 0x0f && drawspec.wired_cross);
+            if (is_crossed && tile.powered_edges && tile.powered_edges !== 0x0f) {
+                // For crossed wires with different power, order matters; horizontal is on top
+                // TODO note that this enforces the CC2 wire order
+                let vert = tile.powered_edges & 0x05, horiz = tile.powered_edges & 0x0a;
+                this._draw_fourway_power_underlay(
+                    vert ? this.layout['#powered'] : this.layout['#unpowered'], 0x05, packet);
+                this._draw_fourway_power_underlay(
+                    horiz ? this.layout['#powered'] : this.layout['#unpowered'], 0x0a, packet);
             }
             else {
-                if (tile.powered_edges & DIRECTIONS[tile.direction].bit) {
-                    // Output (on top)
-                    let [x0, y0, x1, y1] = this._rotate(tile.direction, 0.5 - r, 0, 0.5 + r, 0.5);
-                    blit(powered_coords[0], powered_coords[1], x0, y0, x1 - x0, y1 - y0);
-                }
-                if (tile.powered_edges & DIRECTIONS[DIRECTIONS[tile.direction].right].bit) {
-                    // Right input, which includes the middle
-                    // This actually covers the entire lower right corner, for bent inputs.
-                    let [x0, y0, x1, y1] = this._rotate(tile.direction, 0.5 - r, 0.5 - r, 1, 1);
-                    blit(powered_coords[0], powered_coords[1], x0, y0, x1 - x0, y1 - y0);
-                }
-                if (tile.powered_edges & DIRECTIONS[DIRECTIONS[tile.direction].left].bit) {
-                    // Left input, which does not include the middle
-                    // This actually covers the entire lower left corner, for bent inputs.
-                    let [x0, y0, x1, y1] = this._rotate(tile.direction, 0, 0.5 - r, 0.5 - r, 1);
-                    blit(powered_coords[0], powered_coords[1], x0, y0, x1 - x0, y1 - y0);
-                }
+                this._draw_fourway_tile_power(tile, tile.wire_directions, packet);
+            }
+            // Then draw the wired tile on top of it all
+            this.draw_drawspec(is_crossed ? drawspec.wired_cross : drawspec.wired, name, tile, packet);
+        }
+        else {
+            // There's no wiring here, so just draw the base and then draw the wired part on top
+            // as normal.  If the wired part is optional (as is the case for flooring in the CC2
+            // tileset), draw the base as normal instead.
+            if (drawspec.is_wired_optional) {
+                this.draw_drawspec(drawspec.base, name, tile, packet);
+            }
+            else {
+                packet.blit(drawspec.base[0], drawspec.base[1]);
+                this.draw_drawspec(drawspec.wired, name, tile, packet);
             }
         }
 
-        // Layer 2: the tile itself
-        this._draw_standard(drawspec.logic_gate_tiles[tile.gate_type], tile, tic, blit);
 
-        // Layer 3: counter number
-        if (tile.gate_type === 'counter') {
-            blit(0, 3, tile.memory * 0.75, 0, 0.75, 1, 0.125, 0);
+        // Wired tiles may also have tunnels, drawn on top of everything else
+        if (tile && tile.wire_tunnel_directions) {
+            let tunnel_coords = this.layout['#wire-tunnel'];
+            let tunnel_width = 6/32;
+            let tunnel_length = 12/32;
+            let tunnel_offset = (1 - tunnel_width) / 2;
+            if (tile.wire_tunnel_directions & DIRECTIONS['north'].bit) {
+                packet.blit(tunnel_coords[0], tunnel_coords[1],
+                    tunnel_offset, 0, tunnel_width, tunnel_length);
+            }
+            if (tile.wire_tunnel_directions & DIRECTIONS['south'].bit) {
+                packet.blit(tunnel_coords[0], tunnel_coords[1],
+                    tunnel_offset, 1 - tunnel_length, tunnel_width, tunnel_length);
+            }
+            if (tile.wire_tunnel_directions & DIRECTIONS['west'].bit) {
+                packet.blit(tunnel_coords[0], tunnel_coords[1],
+                    0, tunnel_offset, tunnel_length, tunnel_width);
+            }
+            if (tile.wire_tunnel_directions & DIRECTIONS['east'].bit) {
+                packet.blit(tunnel_coords[0], tunnel_coords[1],
+                    1 - tunnel_length, tunnel_offset, tunnel_length, tunnel_width);
+            }
         }
     }
 
-    _draw_fourway_tile_power(tile, wires, blit) {
+    _draw_fourway_tile_power(tile, wires, packet) {
         // Draw the unpowered tile underneath, if any edge is unpowered (and in fact if /none/ of it
         // is powered then we're done here)
         let powered = (tile.cell ? tile.powered_edges : 0) & wires;
         if (! tile.cell || powered !== tile.wire_directions) {
-            this._draw_fourway_power_underlay(this.layout['#unpowered'], wires, blit);
+            this._draw_fourway_power_underlay(this.layout['#unpowered'], wires, packet);
             if (! tile.cell || powered === 0)
                 return;
         }
 
-        this._draw_fourway_power_underlay(this.layout['#powered'], powered, blit);
+        this._draw_fourway_power_underlay(this.layout['#powered'], powered, packet);
     }
 
-    _draw_fourway_power_underlay(drawspec, bits, blit) {
+    _draw_fourway_power_underlay(drawspec, bits, packet) {
         // Draw the part as a single rectangle, initially just a small dot in the center, but
         // extending out to any edge that has a bit present
         let wire_radius = this.layout['#wire-width'] / 2;
@@ -1101,13 +1277,239 @@ export class Tileset {
         if (bits & DIRECTIONS['west'].bit) {
             x0 = 0;
         }
-        blit(drawspec[0], drawspec[1], x0, y0, x1 - x0, y1 - y0);
+        packet.blit(drawspec[0], drawspec[1], x0, y0, x1 - x0, y1 - y0);
     }
 
-    _draw_railroad(drawspec, tile, tic, blit) {
+
+    _draw_letter(drawspec, name, tile, packet) {
+        this.draw_drawspec(drawspec.base, name, tile, packet);
+
+        let glyph = tile ? tile.overlaid_glyph : "?";
+        if (drawspec.letter_glyphs[glyph]) {
+            let [x, y] = drawspec.letter_glyphs[glyph];
+            // XXX size is hardcoded here, but not below, meh
+            packet.blit(x, y, 0, 0, 0.5, 0.5, 0.25, 0.25);
+        }
+        else {
+            // Look for a range
+            let u = glyph.charCodeAt(0);
+            for (let rangedef of drawspec.letter_ranges) {
+                if (rangedef.range[0] <= u && u < rangedef.range[1]) {
+                    let t = u - rangedef.range[0];
+                    let x = rangedef.x0 + rangedef.w * (t % rangedef.columns);
+                    let y = rangedef.y0 + rangedef.h * Math.floor(t / rangedef.columns);
+                    packet.blit(x, y, 0, 0, rangedef.w, rangedef.h,
+                        (1 - rangedef.w) / 2, (1 - rangedef.h) / 2);
+                    break;
+                }
+            }
+        }
+    }
+
+    _draw_thin_walls(drawspec, name, tile, packet) {
+        let edges = tile ? tile.edges : 0x0f;
+
+        // TODO it would be /extremely/ cool to join corners diagonally, but i can't do that without
+        // access to the context, which defeats the whole purpose of this scheme.  damn
+        if (edges & DIRECTIONS['north'].bit) {
+            packet.blit(...drawspec.thin_walls_ns, 0, 0, 1, 0.5);
+        }
+        if (edges & DIRECTIONS['east'].bit) {
+            packet.blit(...drawspec.thin_walls_ew, 0.5, 0, 0.5, 1);
+        }
+        if (edges & DIRECTIONS['south'].bit) {
+            packet.blit(...drawspec.thin_walls_ns, 0, 0.5, 1, 0.5);
+        }
+        if (edges & DIRECTIONS['west'].bit) {
+            packet.blit(...drawspec.thin_walls_ew, 0, 0, 0.5, 1);
+        }
+    }
+
+    _draw_thin_walls_cc1(drawspec, name, tile, packet) {
+        let edges = tile ? tile.edges : 0x0f;
+
+        // This is kinda best-effort since the tiles are opaque and not designed to combine
+        if (edges === (DIRECTIONS['south'].bit | DIRECTIONS['east'].bit)) {
+            packet.blit(...drawspec.southeast);
+        }
+        else if (edges & DIRECTIONS['north'].bit) {
+            packet.blit(...drawspec.north);
+        }
+        else if (edges & DIRECTIONS['east'].bit) {
+            packet.blit(...drawspec.east);
+        }
+        else if (edges & DIRECTIONS['south'].bit) {
+            packet.blit(...drawspec.south);
+        }
+        else {
+            packet.blit(...drawspec.west);
+        }
+    }
+
+    _draw_bomb_fuse(drawspec, name, tile, packet) {
+        // Draw the base bomb
+        this.draw_drawspec(drawspec.bomb, name, tile, packet);
+
+        // The fuse is made up of four quarter-tiles and animates...  um...  at a rate.  I cannot
+        // tell.  I have spent over an hour poring over this and cannot find a consistent pattern.
+        // It might be random!  I'm gonna say it loops every 0.3 seconds = 18 frames, so 4.5 frames
+        // per cel, I guess.  No one will know.  (But...  I'll know.)
+        // Also it's drawn in the upper right, that's important.
+        let cel = Math.floor(packet.tic / 0.3 * 4) % 4;
+        packet.blit(...drawspec.fuse, 0.5 * (cel % 2), 0.5 * Math.floor(cel / 2), 0.5, 0.5, 0.5, 0);
+    }
+
+    // Frame blocks have an arrow overlay
+    _draw_arrows(drawspec, name, tile, packet) {
+        this.draw_drawspec(drawspec.base, name, tile, packet);
+
+        if (tile && tile.arrows) {
+            let [x, y] = drawspec.arrows;
+            let x0 = 0.25, y0 = 0.25, x1 = 0.75, y1 = 0.75;
+            if (tile.arrows.has('north')) {
+                y0 = 0;
+            }
+            if (tile.arrows.has('east')) {
+                x1 = 1;
+            }
+            if (tile.arrows.has('south')) {
+                y1 = 1;
+            }
+            if (tile.arrows.has('west')) {
+                x0 = 0;
+            }
+            packet.blit(x, y, x0, y0, x1 - x0, y1 - y0);
+        }
+    }
+
+    _draw_visual_state(drawspec, name, tile, packet) {
+        // Apply custom per-type visual states
+        // Note that these accept null, too, and return a default
+        let state = TILE_TYPES[name].visual_state(tile);
+        // If it's a string, that's an alias for another state
+        if (typeof drawspec[state] === 'string') {
+            state = drawspec[state];
+        }
+        if (! drawspec[state]) {
+            console.warn("No such state", state, "for tile", name, tile);
+        }
+
+        this.draw_drawspec(drawspec[state], name, tile, packet);
+    }
+
+    _draw_double_size_monster(drawspec, name, tile, packet) {
+        // CC2's tileset has double-size art for blobs and walkers that spans the tile they're
+        // moving from AND the tile they're moving into.
+        // First, of course, this only happens if they're moving at all.
+        if (! tile || ! tile.movement_speed) {
+            this.draw_drawspec(drawspec.base, name, tile, packet);
+            return;
+        }
+
+        // They only support horizontal and vertical moves, not all four directions.  The other two
+        // directions are simply the animations played in reverse.
+        let axis_cels;
+        let w = 1, h = 1, x = 0, y = 0, reverse = false;
+        if (tile.direction === 'north') {
+            axis_cels = drawspec.vertical;
+            reverse = true;
+            h = 2;
+        }
+        else if (tile.direction === 'south') {
+            axis_cels = drawspec.vertical;
+            h = 2;
+            y = -1;
+        }
+        else if (tile.direction === 'west') {
+            axis_cels = drawspec.horizontal;
+            reverse = true;
+            w = 2;
+        }
+        else if (tile.direction === 'east') {
+            axis_cels = drawspec.horizontal;
+            w = 2;
+            x = -1;
+        }
+
+        let p = tile.movement_progress(packet.tic % 1, packet.update_rate);
+        p = Math.min(p, 0.999);  // FIXME hack for differing movement counters
+        let index = Math.floor(p * (axis_cels.length + 1));
+        if (index === 0 || index > axis_cels.length) {
+            this.draw_drawspec(drawspec.base, name, tile, packet);
+        }
+        else {
+            let cel = reverse ? axis_cels[axis_cels.length - index] : axis_cels[index - 1];
+            packet.blit_aligned(...cel, 0, 0, w, h, x, y);
+        }
+    }
+
+    _draw_rover(drawspec, name, tile, packet) {
+        // Rovers draw fairly normally (with their visual_state giving the monster they're copying),
+        // but they also have an overlay indicating their direction
+        let state = tile ? tile.type.visual_state(tile) : 'inert';
+        this.draw_drawspec(drawspec[state], name, tile, packet);
+
+        if (! tile)
+            return;
+
+        // The direction overlay is one of four quarter-tiles, drawn about in the center of the
+        // rover but shifted an eighth of a tile in the direction in question
+        let overlay_position = this._rotate(tile.direction, 0.25, 0.125, 0.75, 0.625);
+        let index = {north: 0, east: 1, west: 2, south: 3}[tile.direction];
+        if (index === undefined)
+            return;
+        packet.blit(
+            ...drawspec.direction,
+            0.5 * (index % 2), 0.5 * Math.floor(index / 2), 0.5, 0.5,
+            overlay_position[0], overlay_position[1]);
+    }
+
+    _draw_logic_gate(drawspec, name, tile, packet) {
+        // Layer 1: wiring state
+        // Always draw the unpowered wire base
+        let unpowered_coords = this.layout['#unpowered'];
+        let powered_coords = this.layout['#powered'];
+        packet.blit(...unpowered_coords);
+        if (tile && tile.cell) {
+            // What goes on top varies a bit...
+            let r = this.layout['#wire-width'] / 2;
+            if (tile.gate_type === 'not' || tile.gate_type === 'counter') {
+                this._draw_fourway_tile_power(tile, 0x0f, packet);
+            }
+            else {
+                if (tile.powered_edges & DIRECTIONS[tile.direction].bit) {
+                    // Output (on top)
+                    let [x0, y0, x1, y1] = this._rotate(tile.direction, 0.5 - r, 0, 0.5 + r, 0.5);
+                    packet.blit(powered_coords[0], powered_coords[1], x0, y0, x1 - x0, y1 - y0);
+                }
+                if (tile.powered_edges & DIRECTIONS[DIRECTIONS[tile.direction].right].bit) {
+                    // Right input, which includes the middle
+                    // This actually covers the entire lower right corner, for bent inputs.
+                    let [x0, y0, x1, y1] = this._rotate(tile.direction, 0.5 - r, 0.5 - r, 1, 1);
+                    packet.blit(powered_coords[0], powered_coords[1], x0, y0, x1 - x0, y1 - y0);
+                }
+                if (tile.powered_edges & DIRECTIONS[DIRECTIONS[tile.direction].left].bit) {
+                    // Left input, which does not include the middle
+                    // This actually covers the entire lower left corner, for bent inputs.
+                    let [x0, y0, x1, y1] = this._rotate(tile.direction, 0, 0.5 - r, 0.5 - r, 1);
+                    packet.blit(powered_coords[0], powered_coords[1], x0, y0, x1 - x0, y1 - y0);
+                }
+            }
+        }
+
+        // Layer 2: the tile itself
+        this.draw_drawspec(drawspec.logic_gate_tiles[tile.gate_type], name, tile, packet);
+
+        // Layer 3: counter number
+        if (tile.gate_type === 'counter') {
+            packet.blit(0, 3, tile.memory * 0.75, 0, 0.75, 1, 0.125, 0);
+        }
+    }
+
+    _draw_railroad(drawspec, name, tile, packet) {
         // All railroads have regular gravel underneath
         // TODO would be nice to disambiguate since it's possible to have nothing visible
-        this._draw_standard(this.layout['gravel'], tile, tic, blit);
+        this.draw_drawspec(this.layout['gravel'], name, tile, packet);
 
         // FIXME what do i draw if there's no tile?
         let part_order = ['ne', 'se', 'sw', 'nw', 'ew', 'ns'];
@@ -1124,203 +1526,79 @@ export class Tileset {
 
         let has_switch = (tile && tile.track_switch !== null);
         for (let part of visible_parts) {
-            this._draw_standard(drawspec.railroad_ties[part], tile, tic, blit);
+            this.draw_drawspec(drawspec.railroad_ties[part], name, tile, packet);
         }
         let tracks = has_switch ? drawspec.railroad_inactive : drawspec.railroad_active;
         for (let part of visible_parts) {
             if (part !== topmost_part) {
-                this._draw_standard(tracks[part], tile, tic, blit);
+                this.draw_drawspec(tracks[part], name, tile, packet);
             }
         }
 
         if (topmost_part) {
-            this._draw_standard(drawspec.railroad_active[topmost_part], tile, tic, blit);
+            this.draw_drawspec(drawspec.railroad_active[topmost_part], name, tile, packet);
         }
         if (has_switch) {
-            this._draw_standard(drawspec.railroad_switch, tile, tic, blit);
+            this.draw_drawspec(drawspec.railroad_switch, name, tile, packet);
         }
     }
 
-    // Draws a tile type, given by name.  Passing in a tile is optional, but
-    // without it you'll get defaults.
-    draw_type(name, tile, tic, perception, blit) {
-        let drawspec = this.layout[name];
-        if (! drawspec) {
-            console.error(`Don't know how to draw tile type ${name}!`);
+    draw_drawspec(drawspec, name, tile, packet) {
+        if (drawspec.__special__) {
+            if (drawspec.__special__ === 'overlay') {
+                this._draw_overlay(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'scroll') {
+                this._draw_scroll(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'wires') {
+                this._draw_wires(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'letter') {
+                this._draw_letter(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'thin_walls') {
+                this._draw_thin_walls(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'thin_walls_cc1') {
+                this._draw_thin_walls_cc1(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'bomb-fuse') {
+                this._draw_bomb_fuse(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'arrows') {
+                this._draw_arrows(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'visual-state') {
+                this._draw_visual_state(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'double-size-monster') {
+                this._draw_double_size_monster(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'rover') {
+                this._draw_rover(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'perception') {
+                if (drawspec.modes.has(packet.perception)) {
+                    this.draw_drawspec(drawspec.revealed, name, tile, packet);
+                }
+                else {
+                    this.draw_drawspec(drawspec.hidden, name, tile, packet);
+                }
+            }
+            else if (drawspec.__special__ === 'logic-gate') {
+                this._draw_logic_gate(drawspec, name, tile, packet);
+            }
+            else if (drawspec.__special__ === 'railroad') {
+                this._draw_railroad(drawspec, name, tile, packet);
+            }
+            else {
+                console.error(`No such special ${drawspec.__special__} for ${name}`);
+            }
             return;
         }
 
-        if (drawspec.overlay) {
-            // Goofy overlay thing used for green/purple toggle tiles and
-            // southeast thin walls.  Draw the base (a type name or drawspec), then draw
-            // the overlay (either a type name or a regular draw spec).
-            // TODO chance of infinite recursion here
-            if (typeof drawspec.base === 'string') {
-                this.draw_type(drawspec.base, tile, tic, perception, blit);
-            }
-            else {
-                this._draw_standard(drawspec.base, tile, tic, blit);
-            }
-            if (typeof drawspec.overlay === 'string') {
-                this.draw_type(drawspec.overlay, tile, tic, perception, blit);
-                return;
-            }
-            else {
-                drawspec = drawspec.overlay;
-            }
-        }
-
-        // TODO shift everything to use this style, this is ridiculous
-        if (drawspec.special) {
-            if (drawspec.special === 'letter') {
-                this._draw_letter(drawspec, tile, tic, blit);
-                return;
-            }
-            else if (drawspec.special === 'thin_walls') {
-                this._draw_thin_walls(drawspec, tile, tic, blit);
-                return;
-            }
-            else if (drawspec.special === 'thin_walls_cc1') {
-                this._draw_thin_walls_cc1(drawspec, tile, tic, blit);
-                return;
-            }
-            else if (drawspec.special === 'perception') {
-                if (drawspec.modes.has(perception)) {
-                    drawspec = drawspec.revealed;
-                }
-                else {
-                    drawspec = drawspec.hidden;
-                }
-            }
-            else if (drawspec.special === 'logic-gate') {
-                this._draw_logic_gate(drawspec, tile, tic, blit);
-                return;
-            }
-            else if (drawspec.special === 'railroad') {
-                this._draw_railroad(drawspec, tile, tic, blit);
-                return;
-            }
-        }
-
-        let coords = drawspec;
-        if (drawspec.wired) {
-            // This /should/ match CC2's draw order exactly, based on experimentation
-            let wire_radius = this.layout['#wire-width'] / 2;
-            // TODO circuit block with a lightning bolt is always powered
-            // TODO circuit block in motion doesn't inherit cell's power
-            if (tile && tile.wire_directions) {
-                // Draw the base tile
-                blit(drawspec.base[0], drawspec.base[1]);
-
-                this._draw_fourway_tile_power(tile, tile.wire_directions, blit);
-
-                // Then draw the wired tile on top of it all
-                if (tile.wire_directions === 0x0f && drawspec.wired_cross) {
-                    // FIXME oopsydaisy, order matters for the cross part
-                    coords = drawspec.wired_cross;
-                }
-                else {
-                    coords = drawspec.wired;
-                }
-            }
-            else {
-                // There's no wiring here, so just draw the base and then draw the wired part on top
-                // as normal.  If the wired part is optional (as is the case for flooring in the CC2
-                // tileset), draw the base as normal instead.
-                if (drawspec.is_wired_optional) {
-                    coords = drawspec.base;
-                }
-                else {
-                    blit(drawspec.base[0], drawspec.base[1]);
-                    coords = drawspec.wired;
-                }
-            }
-        }
-        else if (drawspec.arrows) {
-            // Directional blocks have a specific overlay, but draw the base first
-            coords = drawspec.base;
-        }
-        else if (drawspec.animate_width) {
-            // Force floors animate their...  cutout, I guess?
-            let [x, y] = drawspec.base;
-            let duration = 3 * this.animation_slowdown;
-            x += drawspec.animate_width * (tic % duration / duration);
-            // Round to tile width
-            x = Math.floor(x * this.size_x + 0.5) / this.size_x;
-            coords = [x, y];
-        }
-        else if (drawspec.animate_height) {
-            // Same, but along the other axis
-            let [x, y] = drawspec.base;
-            let duration = 3 * this.animation_slowdown;
-            y += drawspec.animate_height * (tic % duration / duration);
-            // Round to tile height
-            y = Math.floor(y * this.size_y + 0.5) / this.size_y;
-            coords = [x, y];
-        }
-
-        // Apply custom per-type visual states
-        if (TILE_TYPES[name] && TILE_TYPES[name].visual_state) {
-            // Note that these accept null, too, and return a default
-            let state = TILE_TYPES[name].visual_state(tile);
-            // If it's a string, that's an alias for another state
-            if (typeof coords[state] === 'string') {
-                coords = coords[coords[state]];
-            }
-            else {
-                coords = coords[state];
-            }
-
-            if (! coords) {
-                console.warn("No such state", state, "for tile", name, tile);
-            }
-        }
-
-        this._draw_standard(coords, tile, tic, blit);
-
-        // Wired tiles may also have tunnels, drawn on top of everything else
-        if (drawspec.wired && tile && tile.wire_tunnel_directions) {
-            let tunnel_coords = this.layout['#wire-tunnel'];
-            let tunnel_width = 6/32;
-            let tunnel_length = 12/32;
-            let tunnel_offset = (1 - tunnel_width) / 2;
-            if (tile.wire_tunnel_directions & DIRECTIONS['north'].bit) {
-                blit(tunnel_coords[0], tunnel_coords[1],
-                    tunnel_offset, 0, tunnel_width, tunnel_length);
-            }
-            if (tile.wire_tunnel_directions & DIRECTIONS['south'].bit) {
-                blit(tunnel_coords[0], tunnel_coords[1],
-                    tunnel_offset, 1 - tunnel_length, tunnel_width, tunnel_length);
-            }
-            if (tile.wire_tunnel_directions & DIRECTIONS['west'].bit) {
-                blit(tunnel_coords[0], tunnel_coords[1],
-                    0, tunnel_offset, tunnel_length, tunnel_width);
-            }
-            if (tile.wire_tunnel_directions & DIRECTIONS['east'].bit) {
-                blit(tunnel_coords[0], tunnel_coords[1],
-                    1 - tunnel_length, tunnel_offset, tunnel_length, tunnel_width);
-            }
-        }
-
-        // Directional blocks have arrows drawn on top
-        // TODO does cc2 draw even if there are no arrows?
-        if (drawspec.arrows && tile && tile.arrows) {
-            let [x, y] = drawspec.arrows;
-            let x0 = 0.25, y0 = 0.25, x1 = 0.75, y1 = 0.75;
-            if (tile.arrows.has('north')) {
-                y0 = 0;
-            }
-            if (tile.arrows.has('east')) {
-                x1 = 1;
-            }
-            if (tile.arrows.has('south')) {
-                y1 = 1;
-            }
-            if (tile.arrows.has('west')) {
-                x0 = 0;
-            }
-            blit(x, y, x0, y0, x1 - x0, y1 - y0);
-        }
+        this._draw_standard(drawspec, name, tile, packet);
     }
 
     _rotate(direction, x0, y0, x1, y1) {

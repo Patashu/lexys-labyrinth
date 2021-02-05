@@ -1,10 +1,10 @@
-import * as fflate from 'https://unpkg.com/fflate/esm/index.mjs';
+import * as fflate from 'https://cdn.skypack.dev/fflate?min';
 
-import { DIRECTIONS, TICS_PER_SECOND } from './defs.js';
+import { DIRECTIONS, LAYERS, TICS_PER_SECOND } from './defs.js';
 import { TILES_WITH_PROPS } from './editor-tile-overlays.js';
 import * as format_base from './format-base.js';
 import * as c2g from './format-c2g.js';
-import { PrimaryView, TransientOverlay, DialogOverlay, flash_button, load_json_from_storage, save_json_to_storage } from './main-base.js';
+import { PrimaryView, TransientOverlay, DialogOverlay, AlertOverlay, flash_button, load_json_from_storage, save_json_to_storage } from './main-base.js';
 import CanvasRenderer from './renderer-canvas.js';
 import TILE_TYPES from './tiletypes.js';
 import { SVG_NS, mk, mk_button, mk_svg, string_from_buffer_ascii, bytestring_to_buffer, walk_grid } from './util.js';
@@ -149,6 +149,8 @@ class EditorLevelMetaOverlay extends DialogOverlay {
             ),
         );
         this.root.elements['viewport'].value = stored_level.viewport_size;
+        // FIXME this isn't actually saved lol but also it's 24 bytes into the damn options.  also
+        // it should default to 2, the good one
         this.root.elements['blob_behavior'].value = stored_level.blob_behavior;
         // TODO:
         // - chips?
@@ -199,7 +201,8 @@ class EditorLevelBrowserOverlay extends DialogOverlay {
         this.set_title("choose a level");
 
         // Set up some infrastructure to lazily display level renders
-        this.renderer = new CanvasRenderer(this.conductor.tileset, 32);
+        // FIXME should this use the tileset appropriate for the particular level?
+        this.renderer = new CanvasRenderer(this.conductor.tilesets['ll'], 32);
         this.awaiting_renders = [];
         this.observer = new IntersectionObserver((entries, observer) => {
                 let any_new = false;
@@ -208,7 +211,7 @@ class EditorLevelBrowserOverlay extends DialogOverlay {
                     if (entry.target.classList.contains('--rendered'))
                         continue;
 
-                    let index = parseInt(entry.target.getAttribute('data-index'), 10);
+                    let index = this._get_index(entry.target);
                     if (entry.isIntersecting) {
                         this.awaiting_renders.push(index);
                         any_new = true;
@@ -226,72 +229,256 @@ class EditorLevelBrowserOverlay extends DialogOverlay {
             { root: this.main },
         );
         this.list = mk('ol.editor-level-browser');
+        this.selection = this.conductor.level_index;
         for (let [i, meta] of conductor.stored_game.level_metadata.entries()) {
-            let title = meta.title;
-            let li = mk('li',
-                {'data-index': i},
-                mk('div.-preview'),
-                mk('div.-number', {}, meta.number),
-                mk('div.-title', {}, meta.error ? "(error!)" : meta.title),
-            );
-
-            this.list.append(li);
-
-            if (meta.error) {
-                li.classList.add('--error');
-            }
-            else {
-                this.observer.observe(li);
-            }
+            this.list.append(this._make_list_item(i, meta));
         }
-        this.main.append(this.list);
+        this.list.childNodes[this.selection].classList.add('--selected');
+        this.main.append(
+            mk('p', "Drag to rearrange.  Changes are immediate!"),
+            this.list,
+        );
 
         this.list.addEventListener('click', ev => {
-            let li = ev.target.closest('li');
-            if (! li)
+            let index = this._get_index(ev.target);
+            if (index === null)
                 return;
-
-            let index = parseInt(li.getAttribute('data-index'), 10);
-            if (this.conductor.change_level(index)) {
+            this._select(index);
+        });
+        this.list.addEventListener('dblclick', ev => {
+            let index = this._get_index(ev.target);
+            if (index !== null && this.conductor.change_level(index)) {
                 this.close();
             }
         });
 
-        this.add_button("new level", ev => {
-            this.conductor.editor.append_new_level();
-            this.close();
+        this.sortable = new Sortable(this.list, {
+            group: 'editor-levels',
+            onEnd: ev => {
+                if (ev.oldIndex === ev.newIndex)
+                    return;
+
+                this._move_level(ev.oldIndex, ev.newIndex);
+
+                this.undo_stack.push(() => {
+                    this.list.insertBefore(
+                        this.list.childNodes[ev.newIndex],
+                        this.list.childNodes[ev.oldIndex + (ev.oldIndex < ev.newIndex ? 0 : 1)]);
+                    this._move_level(ev.newIndex, ev.oldIndex);
+                });
+                this.undo_button.disabled = false;
+            },
+        });
+
+        // FIXME ring buffer?
+        this.undo_stack = [];
+
+        // Left buttons
+        this.undo_button = this.add_button("undo", ev => {
+            if (! this.undo_stack.length)
+                return;
+
+            let undo = this.undo_stack.pop();
+            undo();
+            this.undo_button.disabled = ! this.undo_stack.length;
+        });
+        this.undo_button.disabled = true;
+        this.add_button("create", ev => {
+            let index = this.selection + 1;
+            let stored_level = this.conductor.editor._make_empty_level(index + 1, 32, 32);
+            this.conductor.editor.move_level(stored_level, index);
+            this._after_insert_level(stored_level, index);
+
+            this.undo_stack.push(() => {
+                this._delete_level(index);
+            });
+            this.undo_button.disabled = false;
+        });
+        this.add_button("duplicate", ev => {
+            let index = this.selection + 1;
+            let stored_level = this.conductor.editor.duplicate_level(this.selection);
+            this._after_insert_level(stored_level, index);
+
+            this.undo_stack.push(() => {
+                this._delete_level(index);
+            });
+            this.undo_button.disabled = false;
+        });
+        this.delete_button = this.add_button("delete", ev => {
+            let index = this.selection;
+            if (index === this.conductor.level_index) {
+                new AlertOverlay(this.conductor, "You can't delete the level you have open.").open();
+                return;
+            }
+
+            // Snag a copy of the serialized level for undo purposes
+            // FIXME can't undo deleting a corrupt level
+            let meta = this.conductor.stored_game.level_metadata[index];
+            let serialized_level = window.localStorage.getItem(meta.key);
+
+            this._delete_level(index);
+
+            this.undo_stack.push(() => {
+                let stored_level = meta.stored_level ?? c2g.parse_level(
+                    bytestring_to_buffer(serialized_level), index + 1);
+                this.conductor.editor.move_level(stored_level, index);
+                if (this.selection >= index) {
+                    this.selection += 1;
+                }
+                this._after_insert_level(stored_level, index);
+            });
+            this.undo_button.disabled = false;
+        });
+        this._update_delete_button();
+
+        // Right buttons
+        this.add_button_gap();
+        this.add_button("open", ev => {
+            if (this.selection === this.conductor.level_index || this.conductor.change_level(this.selection)) {
+                this.close();
+            }
         });
         this.add_button("nevermind", ev => {
             this.close();
         });
     }
 
+    _make_list_item(index, meta) {
+        let li = mk('li',
+            {'data-index': index},
+            mk('div.-preview'),
+            mk('div.-number', {}, meta.number),
+            mk('div.-title', {}, meta.error ? "(error!)" : meta.title),
+        );
+
+        if (meta.error) {
+            li.classList.add('--error');
+        }
+        else {
+            this.observer.observe(li);
+        }
+
+        return li;
+    }
+
+    renumber_levels(start_index, end_index = null) {
+        end_index = end_index ?? this.conductor.stored_game.level_metadata.length - 1;
+        for (let i = start_index; i <= end_index; i++) {
+            let li = this.list.childNodes[i];
+            let meta = this.conductor.stored_game.level_metadata[i];
+            li.setAttribute('data-index', i);
+            li.querySelector('.-number').textContent = meta.number;
+        }
+    }
+
+    _get_index(element) {
+        let li = element.closest('li');
+        if (! li)
+            return null;
+
+        return parseInt(li.getAttribute('data-index'), 10);
+    }
+
+    _select(index) {
+        this.list.childNodes[this.selection].classList.remove('--selected');
+        this.selection = index;
+        this.list.childNodes[this.selection].classList.add('--selected');
+        this._update_delete_button();
+    }
+
+    _update_delete_button() {
+        this.delete_button.disabled = !! (this.selection === this.conductor.level_index);
+    }
+
     schedule_level_render() {
         if (this._handle)
             return;
-        this._handle = setTimeout(() => { this.render_level() }, 100);
+        this._handle = setTimeout(() => { this.render_level() }, 50);
     }
 
     render_level() {
         this._handle = null;
-        if (this.awaiting_renders.length === 0)
-            return;
 
-        let index = this.awaiting_renders.shift();
-        let element = this.list.childNodes[index];
-        let stored_level = this.conductor.stored_game.load_level(index);
-        this.renderer.set_level(stored_level);
-        this.renderer.set_viewport_size(stored_level.size_x, stored_level.size_y);
-        this.renderer.draw();
-        let canvas = mk('canvas', {
-            width: stored_level.size_x * this.conductor.tileset.size_x / 4,
-            height: stored_level.size_y * this.conductor.tileset.size_y / 4,
-        });
-        canvas.getContext('2d').drawImage(this.renderer.canvas, 0, 0, canvas.width, canvas.height);
-        element.querySelector('.-preview').append(canvas);
-        element.classList.add('--rendered');
+        let t0 = performance.now();
+        while (true) {
+            if (this.awaiting_renders.length === 0)
+                return;
+
+            let index = this.awaiting_renders.shift();
+            let element = this.list.childNodes[index];
+            // FIXME levels may have been renumbered since this was queued, whoops
+            let stored_level = this.conductor.stored_game.load_level(index);
+            this.renderer.set_level(stored_level);
+            this.renderer.set_viewport_size(stored_level.size_x, stored_level.size_y);
+            this.renderer.draw_static_region(0, 0, stored_level.size_x, stored_level.size_y);
+            let canvas = mk('canvas', {
+                width: stored_level.size_x * this.renderer.tileset.size_x / 4,
+                height: stored_level.size_y * this.renderer.tileset.size_y / 4,
+            });
+            canvas.getContext('2d').drawImage(this.renderer.canvas, 0, 0, canvas.width, canvas.height);
+            element.querySelector('.-preview').append(canvas);
+            element.classList.add('--rendered');
+
+            if (performance.now() - t0 > 10)
+                break;
+        }
 
         this.schedule_level_render();
+    }
+
+    expire(index) {
+        let li = this.list.childNodes[index];
+        li.classList.remove('--rendered');
+        li.querySelector('.-preview').textContent = '';
+    }
+
+    _after_insert_level(stored_level, index) {
+        this.list.insertBefore(
+            this._make_list_item(index, this.conductor.stored_game.level_metadata[index]),
+            this.list.childNodes[index]);
+        this._select(index);
+        this.renumber_levels(index + 1);
+    }
+
+    _delete_level(index) {
+        let num_levels = this.conductor.stored_game.level_metadata.length;
+        let stored_level = this.conductor.editor.move_level(index, null);
+
+        this.list.childNodes[this.selection].classList.remove('--selected');
+        this.list.childNodes[index].remove();
+        if (index === num_levels - 1) {
+            this.selection -= 1;
+        }
+        else {
+            this.renumber_levels(index);
+        }
+        this.list.childNodes[this.selection].classList.add('--selected');
+    }
+
+    _move_level(from_index, to_index) {
+        this.conductor.editor.move_level(from_index, to_index);
+
+        let selection = this.selection;
+        if (from_index < to_index) {
+            this.renumber_levels(from_index, to_index);
+            if (from_index < selection && selection <= to_index) {
+                selection -= 1;
+            }
+        }
+        else {
+            this.renumber_levels(to_index, from_index);
+            if (to_index <= selection && selection < from_index) {
+                selection += 1;
+            }
+        }
+
+        if (this.selection === from_index) {
+            this.selection = to_index;
+        }
+        else {
+            this.selection = selection;
+        }
+        this._update_delete_button();
     }
 }
 
@@ -327,7 +514,8 @@ class MouseOperation {
         this.editor = editor;
         this.target = target;
         this.button_mask = MOUSE_BUTTON_MASKS[ev.button];
-        this.alt_mode = ev.button > 0;
+        // Check .buttons instead of .button because Macs use ctrl-click to mean right click
+        this.alt_mode = !! (ev.buttons & 2);
         this.modifier = null;  // or 'shift' or 'ctrl' (ctrl takes precedent)
         this._update_modifier(ev);
 
@@ -444,19 +632,24 @@ class PencilOperation extends DrawOperation {
         if (this.modifier === 'ctrl') {
             let cell = this.cell(x, y);
             if (cell) {
-                this.editor.select_palette(cell[cell.length - 1]);
+                // Pick the topmost thing
+                for (let layer = LAYERS.MAX - 1; layer >= 0; layer--) {
+                    if (cell[layer]) {
+                        this.editor.select_palette(cell[layer]);
+                        break;
+                    }
+                }
             }
             return;
         }
 
         let template = this.editor.palette_selection;
+        let cell = this.cell(x, y);
         if (this.alt_mode) {
             // Erase
-            let cell = this.cell(x, y);
             if (this.modifier === 'shift') {
-                // Aggressive mode: erase the entire cell
-                cell.length = 0;
-                cell.push({type: TILE_TYPES.floor});
+                let new_cell = this.editor.make_blank_cell(x, y);
+                this.editor.replace_cell(cell, new_cell);
             }
             else if (template) {
                 // Erase whatever's on the same layer
@@ -469,22 +662,26 @@ class PencilOperation extends DrawOperation {
                 return;
             if (this.modifier === 'shift') {
                 // Aggressive mode: erase whatever's already in the cell
-                let cell = this.cell(x, y);
-                cell.length = 0;
-                let type = this.editor.palette_selection.type;
-                if (type.draw_layer !== 0) {
-                    cell.push({type: TILE_TYPES.floor});
-                }
-                this.editor.place_in_cell(x, y, template);
+                let new_cell = this.editor.make_blank_cell(x, y);
+                new_cell[template.type.layer] = {...template};
+                this.editor.replace_cell(cell, new_cell);
             }
             else {
                 // Default operation: only erase whatever's on the same layer
-                this.editor.place_in_cell(x, y, template);
+                this.editor.place_in_cell(cell, template);
             }
         }
     }
+
+    cleanup() {
+        this.editor.commit_undo();
+    }
 }
 
+// TODO also, delete
+// TODO also, non-rectangular selections
+// TODO also, better marching ants, hard to see on gravel
+// TODO press esc to cancel pending selection
 class SelectOperation extends MouseOperation {
     start() {
         if (! this.editor.selection.is_empty && this.editor.selection.contains(this.gx0, this.gy0)) {
@@ -503,22 +700,27 @@ class SelectOperation extends MouseOperation {
     }
     step(mx, my, gxf, gyf, gx, gy) {
         if (this.mode === 'float') {
-            if (! this.has_moved) {
-                if (this.make_copy) {
-                    // FIXME support directly making a copy of a copy
-                    this.editor.selection.defloat();
+            if (this.has_moved) {
+                this.editor.selection.move_by(Math.floor(gx - this.gx1), Math.floor(gy - this.gy1));
+                return;
+            }
+
+            if (this.make_copy) {
+                if (this.editor.selection.is_floating) {
+                    // Stamp the floating selection but keep it floating
+                    this.editor.selection.stamp_float(true);
+                }
+                else {
                     this.editor.selection.enfloat(true);
                 }
-                else if (! this.editor.selection.is_floating) {
-                    this.editor.selection.enfloat();
-                }
             }
-            this.editor.selection.move_by(Math.floor(gx - this.gx1), Math.floor(gy - this.gy1));
+            else if (! this.editor.selection.is_floating) {
+                this.editor.selection.enfloat();
+            }
         }
         else {
             this.update_pending_selection();
         }
-
         this.has_moved = true;
     }
 
@@ -528,8 +730,20 @@ class SelectOperation extends MouseOperation {
 
     commit() {
         if (this.mode === 'float') {
+            // Make selection move undoable
+            let dx = Math.floor(this.gx1 - this.gx0);
+            let dy = Math.floor(this.gy1 - this.gy0);
+            if (dx || dy) {
+                this.editor._done(
+                    () => this.editor.selection.move_by(dx, dy),
+                    () => this.editor.selection.move_by(-dx, -dy),
+                );
+            }
         }
         else {
+            // If there's an existing floating selection (which isn't what we're operating on),
+            // commit it before doing anything else
+            this.editor.selection.defloat();
             if (! this.has_moved) {
                 // Plain click clears selection
                 this.pending_selection.discard();
@@ -539,10 +753,11 @@ class SelectOperation extends MouseOperation {
                 this.pending_selection.commit();
             }
         }
+        this.editor.commit_undo();
     }
     abort() {
         if (this.mode === 'float') {
-            // Nothing to do really
+            // FIXME revert the move?
         }
         else {
             this.pending_selection.discard();
@@ -553,7 +768,7 @@ class SelectOperation extends MouseOperation {
 class ForceFloorOperation extends DrawOperation {
     start() {
         // Begin by placing an all-way force floor under the mouse
-        this.editor.place_in_cell(x, y, 'force_floor_all');
+        this.editor.place_in_cell(this.cell(this.gx0, this.gy0), {type: TILE_TYPES.force_floor_all});
     }
     step(mx, my, gxf, gyf) {
         // Walk the mouse movement and change each we touch to match the direction we
@@ -593,24 +808,27 @@ class ForceFloorOperation extends DrawOperation {
             // had some kind of force floor
             if (i === 2) {
                 let prevcell = this.editor.cell(prevx, prevy);
-                if (prevcell[0].type.name.startsWith('force_floor_')) {
-                    prevcell[0].type = TILE_TYPES[name];
+                if (prevcell[LAYERS.terrain].type.name.startsWith('force_floor_')) {
+                    this.editor.place_in_cell(prevcell, {type: TILE_TYPES[name]});
                 }
             }
 
             // Drawing a loop with force floors creates ice (but not in the previous
             // cell, obviously)
             let cell = this.editor.cell(x, y);
-            if (cell[0].type.name.startsWith('force_floor_') &&
-                cell[0].type.name !== name)
+            if (cell[LAYERS.terrain].type.name.startsWith('force_floor_') &&
+                cell[LAYERS.terrain].type.name !== name)
             {
                 name = 'ice';
             }
-            this.editor.place_in_cell(x, y, name);
+            this.editor.place_in_cell(cell, {type: TILE_TYPES[name]});
 
             prevx = x;
             prevy = y;
         }
+    }
+    cleanup() {
+        this.editor.commit_undo();
     }
 }
 
@@ -677,28 +895,33 @@ class TrackOperation extends DrawOperation {
             let cell = this.cell(prevx, prevy);
             let terrain = cell[0];
             if (terrain.type.name === 'railroad') {
+                let new_terrain = {...terrain};
                 if (this.alt_mode) {
                     // Erase
                     // TODO fix track switch?
                     // TODO if this leaves tracks === 0, replace with floor?
-                    terrain.tracks &= ~bit;
+                    new_terrain.tracks &= ~bit;
                 }
                 else {
                     // Draw
-                    terrain.tracks |= bit;
+                    new_terrain.tracks |= bit;
                 }
+                this.editor.place_in_cell(cell, new_terrain);
             }
             else if (! this.alt_mode) {
                 terrain = { type: TILE_TYPES['railroad'] };
                 terrain.type.populate_defaults(terrain);
                 terrain.tracks |= bit;
-                this.editor.place_in_cell(prevx, prevy, terrain);
+                this.editor.place_in_cell(cell, terrain);
             }
 
             prevx = x;
             prevy = y;
             this.entry_direction = DIRECTIONS[exit_direction].opposite;
         }
+    }
+    cleanup() {
+        this.editor.commit_undo();
     }
 }
 
@@ -732,17 +955,18 @@ class WireOperation extends DrawOperation {
             }
             let bit = DIRECTIONS[direction].bit;
 
-            for (let tile of cell) {
-                if (tile.type.name !== 'floor')
-                    continue;
+            let terrain = cell[LAYERS.terrain];
+            if (terrain.type.name === 'floor') {
+                terrain = {...terrain};
                 if (this.alt_mode) {
-                    tile.wire_tunnel_directions &= ~bit;
+                    terrain.wire_tunnel_directions &= ~bit;
                 }
                 else {
-                    tile.wire_tunnel_directions |= bit;
+                    terrain.wire_tunnel_directions |= bit;
                 }
+                this.editor.place_in_cell(cell, terrain);
+                this.editor.commit_undo();
             }
-            return;
         }
     }
     step(mx, my, gxf, gyf) {
@@ -846,9 +1070,12 @@ class WireOperation extends DrawOperation {
             let cell = this.cell(x, y);
             for (let tile of Array.from(cell).reverse()) {
                 // TODO probably a better way to do this
+                if (! tile)
+                    continue;
                 if (['floor', 'steel', 'button_pink', 'button_black', 'teleport_blue', 'teleport_red', 'light_switch_on', 'light_switch_off', 'circuit_block'].indexOf(tile.type.name) < 0)
                     continue;
 
+                tile = {...tile};
                 tile.wire_directions = tile.wire_directions ?? 0;
                 if (this.alt_mode) {
                     // Erase
@@ -858,13 +1085,16 @@ class WireOperation extends DrawOperation {
                     // Draw
                     tile.wire_directions |= DIRECTIONS[wire_direction].bit;
                 }
-                // TODO this.editor.mark_tile_dirty(tile);
+                this.editor.place_in_cell(cell, tile);
                 break;
             }
 
             prevqx = qx;
             prevqy = qy;
         }
+    }
+    cleanup() {
+        this.editor.commit_undo();
     }
 }
 
@@ -894,6 +1124,7 @@ const ADJUST_TOGGLES_CCW = {};
         ['no_player1_sign', 'no_player2_sign'],
         ['flame_jet_off', 'flame_jet_on'],
         ['light_switch_off', 'light_switch_on'],
+        ['stopwatch_bonus', 'stopwatch_penalty'],
     ])
     {
         for (let [i, tile] of cycle.entries()) {
@@ -908,19 +1139,22 @@ class AdjustOperation extends MouseOperation {
         let cell = this.cell(this.gx1, this.gy1);
         if (this.modifier === 'ctrl') {
             for (let tile of cell) {
-                if (TILES_WITH_PROPS[tile.type.name] !== undefined) {
-                    // TODO use the tile's bbox, not the mouse position
-                    this.editor.open_tile_prop_overlay(tile, this.mx0, this.my0);
+                if (tile && TILES_WITH_PROPS[tile.type.name] !== undefined) {
+                    this.editor.open_tile_prop_overlay(
+                        tile, cell, this.editor.renderer.get_cell_rect(cell.x, cell.y));
                     break;
                 }
             }
             return;
         }
         // FIXME implement shift to always target floor, or maybe start from bottom
-        for (let i = cell.length - 1; i >= 0; i--) {
-            let tile = cell[i];
+        for (let layer = LAYERS.MAX - 1; layer >= 0; layer--) {
+            let tile = cell[layer];
+            if (! tile)
+                continue;
 
             let rotated;
+            tile = {...tile}; // TODO little inefficient
             if (this.alt_mode) {
                 // Reverse, go counterclockwise
                 rotated = this.editor.rotate_tile_left(tile);
@@ -929,7 +1163,8 @@ class AdjustOperation extends MouseOperation {
                 rotated = this.editor.rotate_tile_right(tile);
             }
             if (rotated) {
-                this.editor.mark_tile_dirty(tile);
+                this.editor.place_in_cell(cell, tile);
+                this.editor.commit_undo();
                 break;
             }
 
@@ -937,7 +1172,8 @@ class AdjustOperation extends MouseOperation {
             let other = (this.alt_mode ? ADJUST_TOGGLES_CCW : ADJUST_TOGGLES_CW)[tile.type.name];
             if (other) {
                 tile.type = TILE_TYPES[other];
-                this.editor.mark_tile_dirty(tile);
+                this.editor.place_in_cell(cell, tile);
+                this.editor.commit_undo();
                 break;
             }
         }
@@ -948,6 +1184,8 @@ class AdjustOperation extends MouseOperation {
 }
 
 // FIXME currently allows creating outside the map bounds and moving beyond the right/bottom, sigh
+// FIXME undo
+// TODO view is not especially visible
 class CameraOperation extends MouseOperation {
     start(ev) {
         this.offset_x = 0;
@@ -1037,8 +1275,8 @@ class CameraOperation extends MouseOperation {
     }
     step(mx, my, gxf, gyf, gx, gy) {
         // FIXME not right if we zoom, should use gxf
-        let dx = Math.floor((mx - this.mx0) / this.editor.conductor.tileset.size_x + 0.5);
-        let dy = Math.floor((my - this.my0) / this.editor.conductor.tileset.size_y + 0.5);
+        let dx = Math.floor((mx - this.mx0) / this.editor.renderer.tileset.size_x + 0.5);
+        let dy = Math.floor((my - this.my0) / this.editor.renderer.tileset.size_y + 0.5);
 
         let stored_level = this.editor.stored_level;
         if (this.mode === 'create') {
@@ -1478,11 +1716,35 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     floor_custom_green: {
         name: "Custom floor",
-        desc: "Decorative flooring.  Acts like normal floor.  Stops ghosts.",
+        desc: "Decorative.  Acts like normal floor, but stops ghosts.",
+    },
+    floor_custom_red: {
+        name: "Custom floor",
+        desc: "Decorative.  Acts like normal floor, but stops ghosts.",
+    },
+    floor_custom_yellow: {
+        name: "Custom floor",
+        desc: "Decorative.  Acts like normal floor, but stops ghosts.",
+    },
+    floor_custom_blue: {
+        name: "Custom floor",
+        desc: "Decorative.  Acts like normal floor, but stops ghosts.",
     },
     wall_custom_green: {
         name: "Custom wall",
-        desc: "Decorative flooring.  Acts like normal wall.  Stops ghosts.",
+        desc: "Decorative.  Acts like normal wall, but stops ghosts.",
+    },
+    wall_custom_red: {
+        name: "Custom wall",
+        desc: "Decorative.  Acts like normal wall, but stops ghosts.",
+    },
+    wall_custom_yellow: {
+        name: "Custom wall",
+        desc: "Decorative.  Acts like normal wall, but stops ghosts.",
+    },
+    wall_custom_blue: {
+        name: "Custom wall",
+        desc: "Decorative.  Acts like normal wall, but stops ghosts.",
     },
     door_blue: {
         name: "Blue door",
@@ -1706,7 +1968,7 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     ghost: {
         name: "Ghost",
-        desc: "Turns left when it hits something.  Passes freely through almost all obstacles except blocks and other monsters, steel walls, water, lilypads, and custom floors/walls.  Does not set off mines.  Collects items and opens doors.  With fire boots, erases fire it steps on.  With flippers, can pass through water, but not lilypads.  Can only be destroyed by flame jets.",
+        desc: "Turns left when it hits something.  Passes freely through almost all obstacles except blocks and other monsters, steel walls, water, lilypads, and custom floors/walls.  Does not set off mines.  Collects items and opens doors.  With fire boots, erases fire it steps on.  With flippers, can pass through water, but not lilypads.  Can only be destroyed by flame jets, bowling balls, and dynamite.",
     },
     rover: {
         name: "Rover",
@@ -1788,11 +2050,11 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     flame_jet_off: {
         name: "Flame jet (off)",
-        desc: "No effect.  Turned on while an orange button is held or while receiving power.  Turned on permanently by a gray button.",
+        desc: "No effect.  Turned on while a linked orange button is held.  Toggled permanently by a pulse or a gray button.",
     },
     flame_jet_on: {
         name: "Flame jet (on)",
-        desc: "Destroys almost anything that passes over it, except dirt blocks, fireballs, and anything wearing fire boots.  Turned off while an orange button is held or while receiving power.  Turned off permanently by a gray button.",
+        desc: "Destroys almost anything that passes over it, except dirt blocks, fireballs, and anything wearing fire boots.  Turned off while a linked orange button is held.  Toggled permanently by a pulse or a gray button.",
     },
     transmogrifier: {
         name: "Transmogrifier",
@@ -1820,7 +2082,7 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     stopwatch_penalty: {
         name: "Time penalty",
-        desc: "Subtracts ten seconds from the clock.  If less than ten seconds remain, the player will fail immediately.  An untimed level becomes timed and fails immediately.",
+        desc: "Subtracts ten seconds from the clock.  If less than ten seconds remain, the clock will be reduced to its minimum, and the player will fail immediately if the clock is not paused.  An untimed level becomes timed and fails immediately.",
     },
     stopwatch_toggle: {
         name: "Stopwatch",
@@ -2013,9 +2275,11 @@ const SPECIAL_PALETTE_BEHAVIOR = {
             }
         },
         rotate_left(tile) {
+            tile.direction = DIRECTIONS[tile.direction].left;
             tile.arrows = new Set(Array.from(tile.arrows, arrow => DIRECTIONS[arrow].left));
         },
         rotate_right(tile) {
+            tile.direction = DIRECTIONS[tile.direction].right;
             tile.arrows = new Set(Array.from(tile.arrows, arrow => DIRECTIONS[arrow].right));
         },
     },
@@ -2232,12 +2496,26 @@ class Selection {
     }
 
     create_pending() {
-        this.defloat();
-
         return new PendingSelection(this);
     }
 
     set_from_rect(rect) {
+        let old_rect = this.rect;
+        this.editor._do(
+            () => this._set_from_rect(rect),
+            () => {
+                if (old_rect) {
+                    this._set_from_rect(old_rect);
+                }
+                else {
+                    this._clear();
+                }
+            },
+            false,
+        );
+    }
+
+    _set_from_rect(rect) {
         this.rect = rect;
         this.element.classList.add('--visible');
         this.element.setAttribute('x', this.rect.x);
@@ -2263,29 +2541,43 @@ class Selection {
     }
 
     clear() {
-        this.defloat();
+        let rect = this.rect;
+        if (! rect)
+            return;
 
+        this.editor._do(
+            () => this._clear(),
+            () => this._set_from_rect(rect),
+            false,
+        );
+    }
+
+    _clear() {
         this.rect = null;
         this.element.classList.remove('--visible');
     }
 
-    *iter_cells() {
+    *iter_coords() {
         if (! this.rect)
             return;
 
+        let stored_level = this.editor.stored_level;
         for (let x = this.rect.left; x < this.rect.right; x++) {
             for (let y = this.rect.top; y < this.rect.bottom; y++) {
-                yield [x, y];
+                let n = stored_level.coords_to_scalar(x, y);
+                yield [x, y, n];
             }
         }
     }
 
+    // Convert this selection into a floating selection, plucking all the selected cells from the
+    // level and replacing them with blank cells.
     enfloat(copy = false) {
         if (this.floated_cells)
             console.error("Trying to float a selection that's already floating");
 
-        this.floated_cells = [];
-        let tileset = this.editor.conductor.tileset;
+        let floated_cells = [];
+        let tileset = this.editor.renderer.tileset;
         let stored_level = this.editor.stored_level;
         let bbox = this.rect;
         let canvas = mk('canvas', {width: bbox.width * tileset.size_x, height: bbox.height * tileset.size_y});
@@ -2294,39 +2586,74 @@ class Selection {
             this.editor.renderer.canvas,
             bbox.x * tileset.size_x, bbox.y * tileset.size_y, bbox.width * tileset.size_x, bbox.height * tileset.size_y,
             0, 0, bbox.width * tileset.size_x, bbox.height * tileset.size_y);
-        for (let [x, y] of this.iter_cells()) {
-            let n = stored_level.coords_to_scalar(x, y);
+        for (let [x, y, n] of this.iter_coords()) {
+            let cell = stored_level.linear_cells[n];
             if (copy) {
-                this.floated_cells.push(stored_level.linear_cells[n].map(tile => ({...tile})));
+                floated_cells.push(cell.map(tile => tile ? {...tile} : null));
             }
             else {
-                this.floated_cells.push(stored_level.linear_cells[n]);
-                stored_level.linear_cells[n] = [{type: TILE_TYPES['floor']}];
-                this.editor.mark_cell_dirty(stored_level.linear_cells[n]);
+                floated_cells.push(cell);
+                this.editor.replace_cell(cell, this.editor.make_blank_cell(x, y));
             }
         }
-        this.floated_element = mk_svg('g', mk_svg('foreignObject', {
+        let floated_element = mk_svg('g', mk_svg('foreignObject', {
             x: 0, y: 0,
             width: canvas.width, height: canvas.height,
             transform: `scale(${1/tileset.size_x} ${1/tileset.size_y})`,
         }, canvas));
-        this.floated_element.setAttribute('transform', `translate(${bbox.x} ${bbox.y})`);
-        this.svg_group.append(this.floated_element);
+        floated_element.setAttribute('transform', `translate(${bbox.x} ${bbox.y})`);
+
+        // FIXME far more memory efficient to recreate the canvas in the redo, rather than hold onto
+        // it forever
+        this.editor._do(
+            () => {
+                this.floated_element = floated_element;
+                this.floated_cells = floated_cells;
+                this.svg_group.append(floated_element);
+            },
+            () => this._defloat(),
+        );
     }
 
-    defloat() {
+    stamp_float(copy = false) {
         if (! this.floated_element)
             return;
 
         let bbox = this.rect;
         let stored_level = this.editor.stored_level;
         let i = 0;
-        for (let [x, y] of this.iter_cells()) {
-            let n = stored_level.coords_to_scalar(x, y);
-            stored_level.linear_cells[n] = this.floated_cells[i];
-            this.editor.mark_cell_dirty(stored_level.linear_cells[n]);
+        for (let [x, y, n] of this.iter_coords()) {
+            let cell = this.floated_cells[i];
+            if (copy) {
+                cell = cell.map(tile => tile ? {...tile} : null);
+            }
+            cell.x = x;
+            cell.y = y;
+            this.editor.replace_cell(stored_level.linear_cells[n], cell);
             i += 1;
         }
+    }
+
+    defloat() {
+        if (! this.floated_element)
+            return;
+
+        this.stamp_float();
+
+        let element = this.floated_element;
+        let cells = this.floated_cells;
+        this.editor._do(
+            () => this._defloat(),
+            () => {
+                this.floated_cells = cells;
+                this.floated_element = element;
+                this.svg_group.append(element);
+            },
+            false,
+        );
+    }
+
+    _defloat() {
         this.floated_element.remove();
         this.floated_element = null;
         this.floated_cells = null;
@@ -2336,6 +2663,27 @@ class Selection {
     // TODO make more stuff respect this (more things should go through Editor for undo reasons anyway)
 }
 
+// Edited levels are stored as follows.
+// StoredPack and StoredLevel both have an editor_metadata containing:
+//   key
+// StoredPack's level_metadata contains:
+//   stored_level (optional)
+//   title
+//   key
+//   number
+//   index
+// The editor's own storage contains:
+//   packs:
+//     key:
+//       title
+//       level_count
+//       last_modified
+//       current_level
+// And a pack's storage contains:
+//   levels:
+//     - key
+//       title
+//       last_modified
 export class Editor extends PrimaryView {
     constructor(conductor) {
         super(conductor, document.body.querySelector('main#editor'));
@@ -2347,7 +2695,7 @@ export class Editor extends PrimaryView {
         this.stash = load_json_from_storage("Lexy's Labyrinth editor");
         if (! this.stash) {
             this.stash = {
-                packs: {},  // key: { title, level_count, last_modified }
+                packs: {},  // key: { title, level_count, last_modified, current_level }
                 // More pack data is stored separately under the key, as {
                 //   levels: [{key, title}],
                 // }
@@ -2358,7 +2706,7 @@ export class Editor extends PrimaryView {
         this.level_stash = null;
 
         // FIXME don't hardcode size here, convey this to renderer some other way
-        this.renderer = new CanvasRenderer(this.conductor.tileset, 32);
+        this.renderer = new CanvasRenderer(this.conductor.tilesets['ll'], 32);
         this.renderer.perception = 'editor';
 
         // FIXME need this in load_level which is called even if we haven't been setup yet
@@ -2384,6 +2732,7 @@ export class Editor extends PrimaryView {
                 }
                 else if (this.palette_selection) {
                     this.rotate_tile_left(this.palette_selection);
+                    this.redraw_palette_selection();
                 }
             }
             else if (ev.key === '.') {
@@ -2392,6 +2741,7 @@ export class Editor extends PrimaryView {
                 }
                 else if (this.palette_selection) {
                     this.rotate_tile_right(this.palette_selection);
+                    this.redraw_palette_selection();
                 }
             }
         });
@@ -2409,9 +2759,6 @@ export class Editor extends PrimaryView {
                 this.mouse_op = new op_type(this, ev);
                 ev.preventDefault();
                 ev.stopPropagation();
-
-                // FIXME eventually this should be automatic
-                this.renderer.draw();
             }
             else if (ev.button === 1) {
                 // Middle button: always pan
@@ -2429,8 +2776,6 @@ export class Editor extends PrimaryView {
                 this.mouse_op = new op_type(this, ev);
                 ev.preventDefault();
                 ev.stopPropagation();
-
-                this.renderer.draw();
             }
         });
         // Once the mouse is down, we should accept mouse movement anywhere
@@ -2456,9 +2801,6 @@ export class Editor extends PrimaryView {
             }
 
             this.mouse_op.do_mousemove(ev);
-
-            // FIXME !!!
-            this.renderer.draw();
         });
         // TODO should this happen for a mouseup anywhere?
         this.viewport_el.addEventListener('mouseup', ev => {
@@ -2483,8 +2825,8 @@ export class Editor extends PrimaryView {
         this.selected_tile_el.id = 'editor-tile';
         this.selected_tile_el.addEventListener('click', ev => {
             if (this.palette_selection && TILES_WITH_PROPS[this.palette_selection.type.name]) {
-                // FIXME use tile bounds
-                this.open_tile_prop_overlay(this.palette_selection, ev.clientX, ev.clientY);
+                this.open_tile_prop_overlay(
+                    this.palette_selection, null, this.selected_tile_el.getBoundingClientRect());
             }
         });
         // TODO ones for the palette too??
@@ -2493,10 +2835,12 @@ export class Editor extends PrimaryView {
         let rotate_right_button = mk('button.--image', {type: 'button'}, mk('img', {src: 'icons/rotate-right.png'}));
         rotate_right_button.addEventListener('click', ev => {
             this.rotate_tile_right(this.palette_selection);
+            this.redraw_palette_selection();
         });
         let rotate_left_button = mk('button.--image', {type: 'button'}, mk('img', {src: 'icons/rotate-left.png'}));
         rotate_left_button.addEventListener('click', ev => {
             this.rotate_tile_left(this.palette_selection);
+            this.redraw_palette_selection();
         });
         this.root.querySelector('.controls').append(
             mk('div.editor-tile-controls', rotate_right_button, this.selected_tile_el, rotate_left_button));
@@ -2539,6 +2883,12 @@ export class Editor extends PrimaryView {
             button_container.append(button);
             return button;
         };
+        this.undo_button = _make_button("Undo", ev => {
+            this.undo();
+        });
+        this.redo_button = _make_button("Redo", ev => {
+            this.redo();
+        });
         _make_button("Pack properties...", ev => {
             new EditorPackMetaOverlay(this.conductor, this.conductor.stored_game).open();
         });
@@ -2631,6 +2981,8 @@ export class Editor extends PrimaryView {
             }, 60 * 1000);
         });
         _make_button("Share", ev => {
+            // FIXME enable this once gliderbot can understand it
+            //let data = util.b64encode(fflate.zlibSync(new Uint8Array(c2g.synthesize_level(this.stored_level))));
             let data = util.b64encode(c2g.synthesize_level(this.stored_level));
             let url = new URL(location);
             url.searchParams.delete('level');
@@ -2701,18 +3053,32 @@ export class Editor extends PrimaryView {
         this.select_palette('floor', true);
 
         this.selection = new Selection(this);
+
+        this.reset_undo();
     }
 
     activate() {
         super.activate();
-        this.renderer.draw();
+        this.redraw_entire_level();
+        this._schedule_redraw_loop();
     }
 
+    deactivate() {
+        if (this._redraw_handle) {
+            window.cancelAnimationFrame(this._redraw_handle);
+            this._redraw_handle = null;
+        }
+        super.deactivate();
+    }
+
+    // ------------------------------------------------------------------------------------------------
     // Level creation, management, and saving
 
-    _make_cell() {
+    make_blank_cell(x, y) {
         let cell = new format_base.StoredCell;
-        cell.push({type: TILE_TYPES['floor']});
+        cell.x = x;
+        cell.y = y;
+        cell[LAYERS.terrain] = {type: TILE_TYPES.floor};
         return cell;
     }
 
@@ -2723,22 +3089,65 @@ export class Editor extends PrimaryView {
         stored_level.size_y = size_y;
         stored_level.viewport_size = 10;
         for (let i = 0; i < size_x * size_y; i++) {
-            stored_level.linear_cells.push(this._make_cell());
+            stored_level.linear_cells.push(this.make_blank_cell(...stored_level.scalar_to_coords(i)));
         }
-        stored_level.linear_cells[0].push({type: TILE_TYPES['player'], direction: 'south'});
+        stored_level.linear_cells[0][LAYERS.actor] = {type: TILE_TYPES['player'], direction: 'south'};
         return stored_level;
     }
 
-    create_pack() {
-        // TODO get a dialog for asking about level meta first?  or is jumping directly into the editor better?
+    _save_pack_to_stash(stored_pack) {
+        if (! stored_pack.editor_metadata) {
+            console.error("Asked to save a stored pack that's not part of the editor", stored_pack);
+            return;
+        }
+
+        // Reload the stash in case a pack was created in another tab
+        // TODO do this with events
+        this.stash = load_json_from_storage("Lexy's Labyrinth editor") ?? this.stash;
+
+        let pack_key = stored_pack.editor_metadata.key;
+        this.stash.packs[pack_key] = {
+            title: stored_pack.title,
+            level_count: stored_pack.level_metadata.length,
+            last_modified: Date.now(),
+        };
+        save_json_to_storage("Lexy's Labyrinth editor", this.stash);
+    }
+
+    _save_level_to_storage(stored_level) {
+        if (! stored_level.editor_metadata) {
+            console.error("Asked to save a stored level that's not part of the editor", stored_level);
+            return;
+        }
+
+        let buf = c2g.synthesize_level(stored_level);
+        let stringy_buf = string_from_buffer_ascii(buf);
+        window.localStorage.setItem(stored_level.editor_metadata.key, stringy_buf);
+    }
+
+    create_scratch_level() {
         let stored_level = this._make_empty_level(1, 32, 32);
 
+        let stored_pack = new format_base.StoredPack(null);
+        stored_pack.title = "scratch pack";
+        stored_pack.level_metadata.push({
+            stored_level: stored_level,
+        });
+        this.conductor.load_game(stored_pack);
+
+        this.conductor.switch_to_editor();
+    }
+
+    create_pack() {
         let pack_key = `LLP-${Date.now()}`;
         let level_key = `LLL-${Date.now()}`;
         let stored_pack = new format_base.StoredPack(pack_key);
+        stored_pack.title = "Untitled pack";
         stored_pack.editor_metadata = {
             key: pack_key,
         };
+
+        let stored_level = this._make_empty_level(1, 32, 32);
         stored_level.editor_metadata = {
             key: level_key,
         };
@@ -2753,12 +3162,7 @@ export class Editor extends PrimaryView {
         });
         this.conductor.load_game(stored_pack);
 
-        this.stash.packs[pack_key] = {
-            title: "Untitled pack",
-            level_count: 1,
-            last_modified: Date.now(),
-        };
-        save_json_to_storage("Lexy's Labyrinth editor", this.stash);
+        this._save_pack_to_stash(stored_pack);
 
         save_json_to_storage(pack_key, {
             levels: [{
@@ -2766,24 +3170,10 @@ export class Editor extends PrimaryView {
                 title: stored_level.title,
                 last_modified: Date.now(),
             }],
+            current_level_index: 0,
         });
 
-        let buf = c2g.synthesize_level(stored_level);
-        let stringy_buf = string_from_buffer_ascii(buf);
-        window.localStorage.setItem(level_key, stringy_buf);
-
-        this.conductor.switch_to_editor();
-    }
-
-    create_scratch_level() {
-        let stored_level = this._make_empty_level(1, 32, 32);
-
-        let stored_pack = new format_base.StoredPack(null);
-        stored_pack.title = "scratch pack";
-        stored_pack.level_metadata.push({
-            stored_level: stored_level,
-        });
-        this.conductor.load_game(stored_pack);
+        this._save_level_to_storage(stored_level);
 
         this.conductor.switch_to_editor();
     }
@@ -2813,93 +3203,212 @@ export class Editor extends PrimaryView {
                 number: i + 1,
             });
         }
-        this.conductor.load_game(stored_pack);
+        this.conductor.load_game(stored_pack, null, pack_stash.current_level_index);
 
         this.conductor.switch_to_editor();
     }
 
-    append_new_level() {
+    // Move, insert, or delete a level.  If dest_index is null, the level will be deleted.  If
+    // source is a number, it's an index; otherwise, it's a level, assumed to be newly-created, and
+    // will be given a new key and saved to localStorage.  (Passing null and a level will,
+    // of course, do nothing.  Passing an out of bounds source index will also do nothing.)
+    move_level(source, dest_index) {
         let stored_pack = this.conductor.stored_game;
-        let index = stored_pack.level_metadata.length;
-        let number = index + 1;
-        let stored_level = this._make_empty_level(number, 32, 32);
-        let level_key = `LLL-${Date.now()}`;
-        stored_level.editor_metadata = {
-            key: level_key,
-        };
-        // FIXME should convert this to the storage-backed version when switching levels, rather
-        // than keeping it around?
-        stored_pack.level_metadata.push({
-            stored_level: stored_level,
-            key: level_key,
-            title: stored_level.title,
-            index: index,
-            number: number,
-        });
+        if (! stored_pack.editor_metadata) {
+            return;
+        }
 
-        let pack_key = stored_pack.editor_metadata.key;
-        let stash_pack_entry = this.stash.packs[pack_key];
-        stash_pack_entry.level_count = number;
-        stash_pack_entry.last_modified = Date.now();
-        save_json_to_storage("Lexy's Labyrinth editor", this.stash);
+        // Get the level, and pull it out of the list if necessary
+        let stored_level, level_metadata, pack_stash_entry, source_index = null;
+        let pack_stash = load_json_from_storage(stored_pack.editor_metadata.key);
+        if (typeof source === 'number') {
+            if (source === dest_index)
+                return;
 
-        let pack_stash = load_json_from_storage(pack_key);
-        pack_stash.levels.push({
-            key: level_key,
-            title: stored_level.title,
-            last_modified: Date.now(),
-        });
-        save_json_to_storage(pack_key, pack_stash);
+            source_index = source;
+            if (source_index < 0 || source_index >= stored_pack.level_metadata.length) {
+                console.warn("Asked to move a level with an out-of-bounds source:", source_index);
+                return;
+            }
 
-        let buf = c2g.synthesize_level(stored_level);
-        let stringy_buf = string_from_buffer_ascii(buf);
-        window.localStorage.setItem(level_key, stringy_buf);
+            [level_metadata] = stored_pack.level_metadata.splice(source_index, 1);
+            [pack_stash_entry] = pack_stash.levels.splice(source_index, 1);
 
-        this.conductor.change_level(index);
+            stored_level = level_metadata.stored_level ?? null;
+            if (stored_level === null && source_index === this.conductor.level_index) {
+                stored_level = this.conductor.stored_level;
+            }
+        }
+        else {
+            // This is a new level
+            if (dest_index === null)
+                // Nothing to do
+                return;
+
+            dest_index = Math.max(0, Math.min(stored_pack.level_metadata.length, dest_index));
+
+            stored_level = source;
+            level_metadata = {
+                stored_level: stored_level,
+                key: `LLL-${Date.now()}`,
+                title: stored_level.title,
+                index: dest_index,
+                number: dest_index + 1,
+            };
+            pack_stash_entry = {
+                key: level_metadata.key,
+                title: stored_level.title,
+                last_modified: Date.now(),
+            };
+            stored_level.editor_metadata = {
+                key: level_metadata.key,
+            };
+            this._save_level_to_storage(stored_level);
+        }
+
+        if (dest_index === null) {
+            // Erase the level from localStorage
+            window.localStorage.removeItem(level_metadata.key);
+        }
+        else {
+            // Add the level to the appropriate place
+            if (stored_level) {
+                stored_level.index = dest_index;
+                stored_level.number = dest_index + 1;
+            }
+            level_metadata.index = dest_index;
+            level_metadata.number = dest_index + 1;
+
+            stored_pack.level_metadata.splice(dest_index, 0, level_metadata);
+            pack_stash.levels.splice(dest_index, 0, pack_stash_entry);
+        }
+
+        // Renumber levels as necessary
+        let delta, start_index, end_index;
+        if (source_index === null) {
+            // A level was inserted, so increment the number of every level after it
+            delta = +1;
+            start_index = dest_index + 1;
+            end_index = stored_pack.level_metadata.length - 1;
+        }
+        else if (dest_index === null) {
+            // A level was deleted, so decrement the number of every level after it
+            delta = -1;
+            start_index = source_index;
+            end_index = stored_pack.level_metadata.length - 1;
+        }
+        else {
+            // A level was moved, so it depends whether it was moved forwards or backwards
+            if (source_index < dest_index) {
+                delta = -1;
+                start_index = source_index;
+                end_index = dest_index - 1;
+            }
+            else {
+                delta = +1;
+                start_index = dest_index + 1;
+                end_index = source_index;
+            }
+        }
+        for (let i = start_index; i <= end_index; i++) {
+            let meta = stored_pack.level_metadata[i];
+            meta.index += delta;
+            meta.number += delta;
+            if (meta.stored_level) {
+                meta.stored_level.index += delta;
+                meta.stored_level.number += delta;
+            }
+        }
+
+        // Update the conductor's index too so it doesn't get confused
+        if (this.conductor.level_index === source_index) {
+            // FIXME refuse to delete the current level
+            this.conductor.level_index = dest_index;
+        }
+        else if (
+            this.conductor.level_index === dest_index ||
+            (start_index <= this.conductor.level_index && this.conductor.level_index <= end_index))
+        {
+            this.conductor.level_index += delta;
+            // Update the current level if it's not stored in the metadata yet
+            // FIXME if you delete the level before the current one, this gets decremented twice?
+            // can't seem to reproduce
+            if (! stored_level) {
+                this.conductor.stored_level.index += delta;
+                this.conductor.stored_level.number += delta;
+            }
+        }
+
+        // Update the title and headers, since the level number might have changed
+        this.conductor.update_level_title();
+        this.conductor.update_nav_buttons();
+
+        // Save the pack stash and editor stash, and we should be done!
+        pack_stash.current_level_index = this.conductor.level_index;
+        save_json_to_storage(stored_pack.editor_metadata.key, pack_stash);
+        this._save_pack_to_stash(stored_pack);
+
+        return stored_level;
+    }
+
+    duplicate_level(index) {
+        // The most reliable way to clone a level is to reserialize its current state
+        // TODO with autosave this shouldn't be necessary, just copy the existing serialization
+        let stored_level = c2g.parse_level(c2g.synthesize_level(this.conductor.stored_game.load_level(index)), index + 2);
+        return this.move_level(stored_level, index + 1);
     }
 
     save_level() {
         // TODO need feedback.  or maybe not bc this should be replaced with autosave later
         // TODO also need to update the pack data's last modified time
-        let stored_game = this.conductor.stored_game;
-        if (! stored_game.editor_metadata)
+        let stored_pack = this.conductor.stored_game;
+        if (! stored_pack.editor_metadata)
             return;
-
-        // Update the pack index; we need to do this to update the last modified time anyway, so
-        // there's no point in checking whether anything actually changed
-        let pack_key = stored_game.editor_metadata.key;
-        this.stash.packs[pack_key].title = stored_game.title;
-        this.stash.packs[pack_key].last_modified = Date.now();
 
         // Update the pack itself
         // TODO maybe should keep this around, but there's a tricky order of operations thing
         // with it
+        let pack_key = stored_pack.editor_metadata.key;
         let pack_stash = load_json_from_storage(pack_key);
-        pack_stash.title = stored_game.title;
+        pack_stash.title = stored_pack.title;
         pack_stash.last_modified = Date.now();
         pack_stash.levels[this.conductor.level_index].title = this.stored_level.title;
         pack_stash.levels[this.conductor.level_index].last_modified = Date.now();
 
-        // Serialize the level itself
-        let buf = c2g.synthesize_level(this.stored_level);
-        let stringy_buf = string_from_buffer_ascii(buf);
-
         // Save everything at once, level first, to minimize chances of an error getting things
         // out of sync
-        window.localStorage.setItem(this.stored_level.editor_metadata.key, stringy_buf);
+        this._save_level_to_storage(this.stored_level);
         save_json_to_storage(pack_key, pack_stash);
-        save_json_to_storage("Lexy's Labyrinth editor", this.stash);
+        this._save_pack_to_stash(stored_pack);
+
+        if (this._level_browser) {
+            this._level_browser.expire(this.conductor.level_index);
+        }
     }
 
+    // ------------------------------------------------------------------------------------------------
+    // Level loading
+
     load_game(stored_game) {
+        this._level_browser = null;
     }
 
     load_level(stored_level) {
         // TODO support a game too i guess
         this.stored_level = stored_level;
         this.update_viewport_size();
+        this.update_cell_coordinates();
+
+        // Remember current level for an editor level
+        if (this.conductor.stored_game.editor_metadata) {
+            let pack_key = this.conductor.stored_game.editor_metadata.key;
+            let pack_stash = load_json_from_storage(pack_key);
+            pack_stash.current_level_index = this.conductor.level_index;
+            save_json_to_storage(pack_key, pack_stash);
+        }
 
         // Load connections
+        // TODO cloners too
         this.connections_g.textContent = '';
         for (let [src, dest] of Object.entries(this.stored_level.custom_trap_wiring)) {
             let [sx, sy] = this.stored_level.scalar_to_coords(src);
@@ -2917,11 +3426,23 @@ export class Editor extends PrimaryView {
 
         this.renderer.set_level(stored_level);
         if (this.active) {
-            this.renderer.draw();
+            this.redraw_entire_level();
         }
 
         if (this.save_button) {
             this.save_button.disabled = ! this.conductor.stored_game.editor_metadata;
+        }
+
+        if (this._done_setup) {
+            // XXX this doesn't work yet if setup hasn't run because the undo button won't exist
+            this.reset_undo();
+        }
+    }
+
+    update_cell_coordinates() {
+        // We rely on each StoredCell having .x and .y for partial redrawing
+        for (let [i, cell] of this.stored_level.linear_cells.entries()) {
+            [cell.x, cell.y] = this.stored_level.scalar_to_coords(i);
         }
     }
 
@@ -2930,8 +3451,13 @@ export class Editor extends PrimaryView {
         this.svg_overlay.setAttribute('viewBox', `0 0 ${this.stored_level.size_x} ${this.stored_level.size_y}`);
     }
 
+    // ------------------------------------------------------------------------------------------------
+
     open_level_browser() {
-        new EditorLevelBrowserOverlay(this.conductor).open();
+        if (! this._level_browser) {
+            this._level_browser = new EditorLevelBrowserOverlay(this.conductor);
+        }
+        this._level_browser.open();
     }
 
     select_tool(tool) {
@@ -3011,7 +3537,7 @@ export class Editor extends PrimaryView {
             this.palette_selection_el.classList.add('--selected');
         }
 
-        this.mark_tile_dirty(tile);
+        this.redraw_palette_selection();
 
         // Some tools obviously don't work with a palette selection, in which case changing tiles
         // should default you back to the pencil
@@ -3031,7 +3557,6 @@ export class Editor extends PrimaryView {
             return false;
         }
 
-        this.mark_tile_dirty(tile);
         return true;
     }
 
@@ -3046,7 +3571,6 @@ export class Editor extends PrimaryView {
             return false;
         }
 
-        this.mark_tile_dirty(tile);
         return true;
     }
 
@@ -3056,21 +3580,65 @@ export class Editor extends PrimaryView {
         this.palette_actor_direction = DIRECTIONS[this.palette_actor_direction].left;
     }
 
-    mark_tile_dirty(tile) {
-        // TODO partial redraws!  until then, redraw everything
-        if (tile === this.palette_selection) {
-            // FIXME should redraw in an existing canvas
-            this.selected_tile_el.textContent = '';
-            this.selected_tile_el.append(this.renderer.create_tile_type_canvas(tile.type.name, tile));
-        }
-        else {
-            this.renderer.draw();
-        }
+    // ------------------------------------------------------------------------------------------------
+    // Drawing
+
+    redraw_palette_selection() {
+        // FIXME should redraw in an existing canvas
+        this.selected_tile_el.textContent = '';
+        this.selected_tile_el.append(this.renderer.create_tile_type_canvas(
+            this.palette_selection.type.name, this.palette_selection));
     }
 
     mark_cell_dirty(cell) {
-        this.renderer.draw();
+        this.mark_point_dirty(cell.x, cell.y);
     }
+
+    mark_point_dirty(x, y) {
+        if (! this._dirty_rect) {
+            this._dirty_rect = new DOMRect(x, y, 1, 1);
+        }
+        else {
+            let rect = this._dirty_rect;
+            if (x < rect.left) {
+                rect.width = rect.right - x;
+                rect.x = x;
+            }
+            else if (x >= rect.right) {
+                rect.width = x - rect.left + 1;
+            }
+            if (y < rect.top) {
+                rect.height = rect.bottom - y;
+                rect.y = y;
+            }
+            else if (y >= rect.bottom) {
+                rect.height = y - rect.top + 1;
+            }
+        }
+    }
+
+    redraw_entire_level() {
+        this.renderer.draw_static_region(0, 0, this.stored_level.size_x, this.stored_level.size_y);
+    }
+
+    _schedule_redraw_loop() {
+        this._redraw_handle = window.requestAnimationFrame(this._redraw_dirty.bind(this));
+        this._dirty_rect = null;
+    }
+
+    // Automatically redraw only what's changed
+    _redraw_dirty() {
+        // TODO draw sparkle background under the starting player
+        if (this._dirty_rect) {
+            this.renderer.draw_static_region(
+                this._dirty_rect.left, this._dirty_rect.top,
+                this._dirty_rect.right, this._dirty_rect.bottom);
+        }
+        this._schedule_redraw_loop();
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // Utility/inspection
 
     is_in_bounds(x, y) {
         return 0 <= x && x < this.stored_level.size_x && 0 <= y && y < this.stored_level.size_y;
@@ -3085,37 +3653,39 @@ export class Editor extends PrimaryView {
         }
     }
 
-    place_in_cell(x, y, tile) {
+    // ------------------------------------------------------------------------------------------------
+    // Mutation
+
+    // DOES NOT commit the undo entry!
+    place_in_cell(cell, tile) {
         // TODO weird api?
         if (! tile)
             return;
 
-        if (! this.selection.contains(x, y))
+        if (! this.selection.contains(cell.x, cell.y))
             return;
 
-        let cell = this.cell(x, y);
         // Replace whatever's on the same layer
         // TODO should preserve wiring if possible too
-        for (let i = cell.length - 1; i >= 0; i--) {
-            // If we find a tile of the same type as the one being drawn, see if it has custom
-            // combine behavior (only the case if it came from the palette)
-            if (cell[i].type === tile.type &&
-                // FIXME this is hacky garbage
-                tile === this.palette_selection && this.palette_selection_from_palette &&
-                SPECIAL_PALETTE_BEHAVIOR[tile.type.name] &&
-                SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_draw)
-            {
-                SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_draw(tile, cell[i]);
-                return;
-            }
+        let layer = tile.type.layer;
+        let existing_tile = cell[layer];
 
-            if (cell[i].type.draw_layer === tile.type.draw_layer) {
-                cell.splice(i, 1);
-            }
+        // If we find a tile of the same type as the one being drawn, see if it has custom combine
+        // behavior (only the case if it came from the palette)
+        if (existing_tile && existing_tile.type === tile.type &&
+            // FIXME this is hacky garbage
+            tile === this.palette_selection && this.palette_selection_from_palette &&
+            SPECIAL_PALETTE_BEHAVIOR[tile.type.name] &&
+            SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_draw)
+        {
+            let old_tile = {...existing_tile};
+            let new_tile = existing_tile;
+            SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_draw(tile, new_tile);
+            this._assign_tile(cell, layer, new_tile, old_tile);
+            return;
         }
 
-        cell.push(Object.assign({}, tile));
-        cell.sort((a, b) => a.type.draw_layer - b.type.draw_layer);
+        this._assign_tile(cell, layer, {...tile}, existing_tile);
     }
 
     erase_tile(cell, tile = null) {
@@ -3125,53 +3695,192 @@ export class Editor extends PrimaryView {
             tile = this.palette_selection;
         }
 
-        let layer = tile.type.draw_layer;
-        for (let i = cell.length - 1; i >= 0; i--) {
-            // If we find a tile of the same type as the one being drawn, see if it has custom
-            // combine behavior (only the case if it came from the palette)
-            if (cell[i].type === tile.type &&
-                // FIXME this is hacky garbage
-                tile === this.palette_selection && this.palette_selection_from_palette &&
-                SPECIAL_PALETTE_BEHAVIOR[tile.type.name] &&
-                SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_erase)
-            {
-                let remove = SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_erase(tile, cell[i]);
-                if (! remove)
-                    return;
-            }
-
-            if (cell[i].type.draw_layer === layer) {
-                cell.splice(i, 1);
-            }
-        }
-
-        // Don't allow erasing the floor entirely
-        if (layer === 0) {
-            cell.unshift({type: TILE_TYPES.floor});
-        }
         this.mark_cell_dirty(cell);
+        let existing_tile = cell[tile.type.layer];
+
+        // If we find a tile of the same type as the one being drawn, see if it has custom combine
+        // behavior (only the case if it came from the palette)
+        if (existing_tile && existing_tile.type === tile.type &&
+            // FIXME this is hacky garbage
+            tile === this.palette_selection && this.palette_selection_from_palette &&
+            SPECIAL_PALETTE_BEHAVIOR[tile.type.name] &&
+            SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_erase)
+        {
+            let remove = SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_erase(tile, existing_tile);
+            if (! remove)
+                return;
+        }
+
+        let new_tile = null;
+        if (tile.type.layer === LAYERS.terrain) {
+            new_tile = {type: TILE_TYPES.floor};
+        }
+
+        this._assign_tile(cell, tile.type.layer, new_tile, existing_tile);
     }
 
-    open_tile_prop_overlay(tile, x0, y0) {
+    replace_cell(cell, new_cell) {
+        // Save the coordinates so it doesn't matter what they are when undoing
+        let x = cell.x, y = cell.y;
+        let n = this.stored_level.coords_to_scalar(x, y);
+        this._do(
+            () => {
+                this.stored_level.linear_cells[n] = new_cell;
+                new_cell.x = x;
+                new_cell.y = y;
+                this.mark_cell_dirty(new_cell);
+            },
+            () => {
+                this.stored_level.linear_cells[n] = cell;
+                cell.x = x;
+                cell.y = y;
+                this.mark_cell_dirty(cell);
+            },
+        );
+    }
+
+    resize_level(size_x, size_y, x0 = 0, y0 = 0) {
+        let new_cells = [];
+        for (let y = y0; y < y0 + size_y; y++) {
+            for (let x = x0; x < x0 + size_x; x++) {
+                new_cells.push(this.cell(x, y) ?? this.make_blank_cell(x, y));
+            }
+        }
+
+        let original_cells = this.stored_level.linear_cells;
+        let original_size_x = this.stored_level.size_x;
+        let original_size_y = this.stored_level.size_y;
+
+        this._do(() => {
+            this.stored_level.linear_cells = new_cells;
+            this.stored_level.size_x = size_x;
+            this.stored_level.size_y = size_y;
+            this.update_viewport_size();
+            this.update_cell_coordinates();
+            this.redraw_entire_level();
+        }, () => {
+            this.stored_level.linear_cells = original_cells;
+            this.stored_level.size_x = original_size_x;
+            this.stored_level.size_y = original_size_y;
+            this.update_viewport_size();
+            this.update_cell_coordinates();
+            this.redraw_entire_level();
+        });
+        this.commit_undo();
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // Undo/redo
+
+    _do(redo, undo, modifies = true) {
+        redo();
+        this._done(redo, undo, modifies);
+    }
+
+    _done(redo, undo, modifies = true) {
+        // TODO parallel arrays would be smaller
+        this.undo_entry.push([undo, redo]);
+
+        if (this.redo_stack.length > 0) {
+            this.redo_stack.length = 0;
+        }
+    }
+
+    _assign_tile(cell, layer, new_tile, old_tile) {
+        this._do(
+            () => {
+                cell[layer] = new_tile;
+                this.mark_cell_dirty(cell);
+            },
+            () => {
+                cell[layer] = old_tile;
+                this.mark_cell_dirty(cell);
+            },
+        );
+    }
+
+    reset_undo() {
+        this.undo_entry = [];
+        this.undo_stack = [];
+        this.redo_stack = [];
+        this._update_undo_redo_enabled();
+    }
+
+    undo() {
+        // We shouldn't really have an uncommitted entry lying around at a time when the user can
+        // click the undo button, but just in case, prefer that to the undo stack
+        let entry;
+        if (this.undo_entry.length > 0) {
+            entry = this.undo_entry;
+            this.undo_entry = [];
+        }
+        else if (this.undo_stack.length > 0) {
+            entry = this.undo_stack.pop();
+            this.redo_stack.push(entry);
+        }
+        else {
+            return;
+        }
+
+        for (let i = entry.length - 1; i >= 0; i--) {
+            entry[i][0]();
+        }
+
+        this._update_undo_redo_enabled();
+    }
+
+    redo() {
+        if (this.redo_stack.length === 0)
+            return;
+
+        this.commit_undo();
+        let entry = this.redo_stack.pop();
+        this.undo_stack.push(entry);
+        for (let [undo, redo] of entry) {
+            redo();
+        }
+
+        this._update_undo_redo_enabled();
+    }
+
+    commit_undo() {
+        if (this.undo_entry.length > 0) {
+            this.undo_stack.push(this.undo_entry);
+            this.undo_entry = [];
+        }
+
+        this._update_undo_redo_enabled();
+    }
+
+    _update_undo_redo_enabled() {
+        this.undo_button.disabled = this.undo_stack.length === 0;
+        this.redo_button.disabled = this.redo_stack.length === 0;
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // Misc UI stuff
+
+    open_tile_prop_overlay(tile, cell, rect) {
         this.cancel_mouse_operation();
         // FIXME keep these around, don't recreate them constantly
         let overlay_class = TILES_WITH_PROPS[tile.type.name];
         let overlay = new overlay_class(this.conductor);
-        overlay.edit_tile(tile);
+        overlay.edit_tile(tile, cell);
         overlay.open();
 
         // FIXME move this into TransientOverlay or some other base class
         let root = overlay.root;
+        let spacing = 2;
         // Vertical position: either above or below, preferring the side that has more space
-        if (y0 > document.body.clientHeight / 2) {
+        if (rect.top - 0 > document.body.clientHeight - rect.bottom) {
             // Above
             root.classList.add('--above');
-            root.style.top = `${y0 - root.offsetHeight}px`;
+            root.style.top = `${rect.top - root.offsetHeight - spacing}px`;
         }
         else {
             // Below
             root.classList.remove('--above');
-            root.style.top = `${y0}px`;
+            root.style.top = `${rect.bottom + spacing}px`;
         }
         // Horizontal position: centered, but kept within the screen
         let left;
@@ -3182,10 +3891,10 @@ export class Editor extends PrimaryView {
         }
         else {
             left = Math.max(margin, Math.min(document.body.clientWidth - root.offsetWidth - margin,
-                x0 - root.offsetWidth / 2));
+                (rect.left + rect.right - root.offsetWidth) / 2));
         }
         root.style.left = `${left}px`;
-        root.style.setProperty('--chevron-offset', `${x0 - left}px`);
+        root.style.setProperty('--chevron-offset', `${(rect.left + rect.right) / 2 - left}px`);
     }
 
     cancel_mouse_operation() {
@@ -3193,20 +3902,5 @@ export class Editor extends PrimaryView {
             this.mouse_op.do_abort();
             this.mouse_op = null;
         }
-    }
-
-    resize_level(size_x, size_y, x0 = 0, y0 = 0) {
-        let new_cells = [];
-        for (let y = y0; y < y0 + size_y; y++) {
-            for (let x = x0; x < x0 + size_x; x++) {
-                new_cells.push(this.cell(x, y) ?? this._make_cell());
-            }
-        }
-
-        this.stored_level.linear_cells = new_cells;
-        this.stored_level.size_x = size_x;
-        this.stored_level.size_y = size_y;
-        this.update_viewport_size();
-        this.renderer.draw();
     }
 }

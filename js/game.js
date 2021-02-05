@@ -1,5 +1,5 @@
 import * as algorithms from './algorithms.js';
-import { DIRECTIONS, DIRECTION_ORDER, INPUT_BITS, TICS_PER_SECOND } from './defs.js';
+import { DIRECTIONS, DIRECTION_ORDER, LAYERS, INPUT_BITS, TICS_PER_SECOND } from './defs.js';
 import { LevelInterface } from './format-base.js';
 import TILE_TYPES from './tiletypes.js';
 
@@ -30,22 +30,25 @@ export class Tile {
         return Object.assign(tile, tile_template);
     }
 
+    movement_progress(tic_offset, interpolate_backwards_by = 3) {
+        // FIXME this will need altering if 60fps actually updates at 60fps
+        return ((this.movement_speed - this.movement_cooldown - interpolate_backwards_by) + tic_offset * 3) / this.movement_speed;
+    }
+
     // Gives the effective position of an actor in motion, given smooth scrolling
-    visual_position(tic_offset = 0) {
-        let x = this.cell.x;
-        let y = this.cell.y;
+    visual_position(tic_offset = 0, interpolate_backwards_by = 0) {
         if (! this.previous_cell || this.movement_speed === null) {
-            return [x, y];
+            return [this.cell.x, this.cell.y];
         }
-        else {
-            // For a movement speed of N, the cooldown is set to N during the tic an actor starts
-            // moving, and we interpolate it from there to N - 1 over the course of the duration
-            let p = ((this.movement_speed - this.movement_cooldown) + tic_offset * 3) / this.movement_speed;
-            return [
-                (1 - p) * this.previous_cell.x + p * x,
-                (1 - p) * this.previous_cell.y + p * y,
-            ];
-        }
+
+        let cell = this.destination_cell ?? this.cell;
+        // For a movement speed of N, the cooldown is set to N during the tic an actor starts
+        // moving, and we interpolate it from there to N - 1 over the course of the duration
+        let p = this.movement_progress(tic_offset, interpolate_backwards_by);
+        return [
+            (1 - p) * this.previous_cell.x + p * cell.x,
+            (1 - p) * this.previous_cell.y + p * cell.y,
+        ];
     }
 
     // TODO don't love that the arg order is different here vs tile type, but also don't love that
@@ -54,9 +57,15 @@ export class Tile {
         // Extremely awkward special case: items don't block monsters if the cell also contains an
         // item modifier (i.e. "no" sign) or a real player
         // TODO would love to get this outta here
-        if (this.type.is_item &&
-            this.cell.some(tile => tile.type.item_modifier || tile.type.is_real_player))
-            return false;
+        if (this.type.is_item) {
+            let item_mod = this.cell.get_item_mod();
+            if (item_mod && item_mod.type.item_modifier)
+                return false;
+
+            let actor = this.cell.get_actor();
+            if (actor && actor.type.is_real_player)
+                return false;
+        }
 
         if (this.type.blocks_collision & other.type.collision_mask)
             return true;
@@ -64,6 +73,12 @@ export class Tile {
         // FIXME bowling ball isn't affected by helmet?  also not sure bowling ball is stopped by
         // helmet?
         if (this.has_item('helmet') || (this.type.is_actor && ! this.type.ttl && other.has_item('helmet')))
+            return true;
+
+        // Blocks being pulled are blocked by their pullers (which are, presumably, the only things
+        // they can be moving towards)
+        // FIXME something about this broke pulling blocks through teleporters; see #99 Delirium
+        if (this.type.is_actor && other.type.is_block && other.is_pulled)
             return true;
 
         // FIXME get this out of here
@@ -116,7 +131,20 @@ export class Tile {
         direction = tile.cell.redirect_exit(tile, direction);
         // Need to explicitly check this here, otherwise you could /attempt/ to push a block,
         // which would fail, but it would still change the block's direction
+        // XXX this expects to take a level but it only matters with push_mode === 'push'
         return tile.cell.try_leaving(tile, direction);
+    }
+
+    can_pull(tile, direction) {
+        // FIXME starting to think fx should not count as actors
+        if (tile.type.ttl)
+            return false;
+
+        // FIXME i don't actually know the precise rules here.  dirt blocks and ghosts can pull
+        // other blocks even though they can't usually push them.  given the existence of monster
+        // hooking, i suspect /anything/ can be hooked but on monsters it has a weird effect?
+        // figure this out?
+        return (! tile.type.allows_push || tile.type.allows_push(tile, direction));
     }
 
     // Inventory stuff
@@ -136,37 +164,38 @@ Tile.prototype.wire_tunnel_directions = 0;
 
 export class Cell extends Array {
     constructor(x, y) {
-        super();
+        super(LAYERS.MAX);
         this.x = x;
         this.y = y;
     }
 
-    _add(tile, index = null) {
-        if (index === null) {
-            this.push(tile);
+    _add(tile) {
+        let index = tile.type.layer;
+        if (this[index]) {
+            if (index !== LAYERS.vfx) {
+                console.error("ATTEMPTING TO ADD", tile, "TO CELL", this, "WHICH ERASES EXISTING TILE", this[index]);
+            }
+            this[index].cell = null;
         }
-        else {
-            this.splice(index, 0, tile);
-        }
+        this[index] = tile;
         tile.cell = this;
     }
 
     // DO NOT use me to remove a tile permanently, only to move it!
     // Should only be called from Level, which handles some bookkeeping!
     _remove(tile) {
-        let index = this.indexOf(tile);
-        if (index < 0)
+        let index = tile.type.layer;
+        if (this[index] !== tile)
             throw new Error("Asked to remove tile that doesn't seem to exist");
 
-        this.splice(index, 1);
+        this[index] = null;
         tile.cell = null;
-        return index;
     }
 
     get_wired_tile() {
         let ret = null;
         for (let tile of this) {
-            if ((tile.wire_directions || tile.wire_tunnel_directions) && ! tile.movement_cooldown) {
+            if (tile && (tile.wire_directions || tile.wire_tunnel_directions) && ! tile.movement_cooldown) {
                 ret = tile;
                 // Don't break; we want the topmost tile!
             }
@@ -175,52 +204,53 @@ export class Cell extends Array {
     }
 
     get_terrain() {
-        for (let tile of this) {
-            if (tile.type.draw_layer === 0)
-                return tile;
-        }
-        return null;
+        return this[LAYERS.terrain] ?? null;
     }
 
     get_actor() {
-        for (let tile of this) {
-            if (tile.type.is_actor)
-                return tile;
-        }
-        return null;
+        return this[LAYERS.actor] ?? null;
     }
 
     get_item() {
-        for (let tile of this) {
-            if (tile.type.is_item)
-                return tile;
-        }
-        return null;
+        return this[LAYERS.item] ?? null;
     }
 
     get_item_mod() {
-        for (let tile of this) {
-            if (tile.type.item_modifier)
-                return tile;
-        }
-        return null;
+        return this[LAYERS.item_mod] ?? null;
     }
 
     has(name) {
-        return this.some(tile => tile.type.name === name);
+        let current = this[TILE_TYPES[name].layer];
+        return current && current.type.name === name;
     }
 
-    try_leaving(actor, direction) {
-        for (let tile of this) {
-            if (tile === actor)
-                continue;
+    // FIXME honestly no longer sure why these two are on Cell, or even separate really
+    try_leaving(actor, direction, level, push_mode) {
+        // The only tiles that can trap us are thin walls and terrain, so for perf (this is very hot
+        // code), only bother checking those)
+        let terrain = this[LAYERS.terrain];
+        let thin_walls = this[LAYERS.thin_wall];
+        let blocker;
 
-            if (tile.type.traps && tile.type.traps(tile, actor))
-                return false;
-
-            if (tile.type.blocks_leaving && tile.type.blocks_leaving(tile, actor, direction))
-                return false;
+        if (thin_walls && thin_walls.type.blocks_leaving && thin_walls.type.blocks_leaving(thin_walls, actor, direction)) {
+            blocker = thin_walls;
         }
+        else if (terrain.type.traps && terrain.type.traps(terrain, actor)) {
+            blocker = terrain;
+        }
+        else if (terrain.type.blocks_leaving && terrain.type.blocks_leaving(terrain, actor, direction)) {
+            blocker = terrain;
+        }
+
+        if (blocker) {
+            if (push_mode === 'push') {
+                if (actor.type.on_blocked) {
+                    actor.type.on_blocked(actor, level, direction, blocker);
+                }
+            }
+            return false;
+        }
+
         return true;
     }
 
@@ -232,22 +262,30 @@ export class Cell extends Array {
     // - 'push': Fire bump triggers.  Attempt to move pushable objects out of the way immediately.
     try_entering(actor, direction, level, push_mode = null) {
         let pushable_tiles = [];
-        let blocked = false;
-        // (Note that here, and anywhere else that has any chance of altering the cell's contents,
-        // we iterate over a copy of the cell to insulate ourselves from tiles appearing or
-        // disappearing mid-iteration.)
-        for (let tile of Array.from(this).reverse()) {
+        // Subtleties ahoy!  This is **EXTREMELY** sensitive to ordering.  Consider:
+        // - An actor with foil MUST NOT bump a wall on the other side of a thin wall.
+        // - A ghost with foil MUST bump a wall (even on the other side of a thin wall) and be
+        //   deflected by the resulting steel.
+        // - A bowling ball MUST NOT destroy an actor on the other side of a thin wall, or on top of
+        //   a regular wall.
+        // - A fireball MUST melt an ice block AND ALSO still be deflected by it, even if the ice
+        //   block is on top of an item (which blocks the fireball), but NOT one on the other side
+        //   of a thin wall.
+        // - A rover MUST NOT bump walls underneath a canopy (which blocks it).
+        // It seems the order is thus: canopy + thin wall; terrain; actor; item.  Which is the usual
+        // ordering from the top down, except that terrain is checked before actors.  Really, the
+        // ordering is from "outermost" to "innermost", which makes physical sense.
+        for (let layer of [
+            LAYERS.canopy, LAYERS.thin_wall, LAYERS.terrain, LAYERS.swivel,
+            LAYERS.actor, LAYERS.item_mod, LAYERS.item])
+        {
+            let tile = this[layer];
+            if (! tile)
+                continue;
+
             // TODO check ignores here?
-            // Note that if they can't enter this cell because of a thin wall, then they can't bump
-            // any of our other tiles either.  (This is my best guess at the actual behavior, seeing
-            // as walls also block everything but players can obviously bump /those/.)
-            if (! blocked) {
-                if (actor.type.on_bump) {
-                    actor.type.on_bump(actor, level, tile, direction);
-                }
-                if (tile.type.on_bumped) {
-                    tile.type.on_bumped(tile, level, actor);
-                }
+            if (tile.type.on_bumped) {
+                tile.type.on_bumped(tile, level, actor);
             }
 
             if (! tile.blocks(actor, direction, level))
@@ -256,23 +294,23 @@ export class Cell extends Array {
             if (push_mode === null)
                 return false;
 
-            if (! actor.can_push(tile, direction)) {
-                if (push_mode === 'push') {
-                    // Track this instead of returning immediately, because 'push' mode also bumps
-                    // every tile in the cell
-                    blocked = true;
-                }
-                else {
-                    return false;
-                }
+            if (actor.can_push(tile, direction) || (
+                level.compat.tanks_teeth_push_ice_blocks && tile.type.name === 'ice_block' &&
+                (actor.type.name === 'teeth' || actor.type.name === 'teeth_timid' || actor.type.name === 'tank_blue')
+            )) {
+                // Collect pushables for later, so we don't inadvertently push through a wall
+                pushable_tiles.push(tile);
             }
-
-            // Collect pushables for later, so we don't inadvertently push through a wall
-            pushable_tiles.push(tile);
+            else {
+                // It's in our way and we can't push it, so we're done here
+                if (push_mode === 'push') {
+                    if (actor.type.on_blocked) {
+                        actor.type.on_blocked(actor, level, direction, tile);
+                    }
+                }
+                return false;
+            }
         }
-
-        if (blocked)
-            return false;
 
         // If we got this far, all that's left is to deal with pushables
         if (pushable_tiles.length > 0) {
@@ -296,7 +334,12 @@ export class Cell extends Array {
                         if (actor === level.player) {
                             level._set_tile_prop(actor, 'is_pushing', true);
                         }
-                        if (! level.attempt_out_of_turn_step(tile, direction)) {
+                        if (level.attempt_out_of_turn_step(tile, direction)) {
+                            if (actor === level.player) {
+                                level.sfx.play_once('push');
+                            }
+                        }
+                        else {
                             // If the push failed and the obstacle is in the middle of a slide,
                             // remember this as the next move it'll make.
                             if (tile.slide_mode !== null && tile.movement_cooldown > 0) {
@@ -318,7 +361,7 @@ export class Cell extends Array {
             // BLOX replay, and right at the end ice blocks spring mine each other.  also, the wiki
             // suggests something about another actor moving away at the same time?
             if (! (level.compat.emulate_spring_mining && actor.type.is_real_player) &&
-                push_mode === 'push' && this.some(tile => tile.blocks(actor, direction, level)))
+                push_mode === 'push' && this.some(tile => tile && tile.blocks(actor, direction, level)))
                 return false;
         }
 
@@ -327,10 +370,9 @@ export class Cell extends Array {
 
     // Special railroad ability: change the direction we attempt to leave
     redirect_exit(actor, direction) {
-        for (let tile of this) {
-            if (tile.type.redirect_exit) {
-                return tile.type.redirect_exit(tile, actor, direction);
-            }
+        let terrain = this.get_terrain();
+        if (terrain && terrain.type.redirect_exit) {
+            return terrain.type.redirect_exit(terrain, actor, direction);
         }
         return direction;
     }
@@ -391,7 +433,6 @@ export class Level extends LevelInterface {
         // global clock which doesn't get reset between levels (!).
         this.step_parity = 5;
 
-        this.hint_shown = null;
         // TODO in lynx/steam, this carries over between levels; in tile world, you can set it manually
         this.force_floor_direction = 'north';
         // PRNG is initialized to zero
@@ -432,8 +473,10 @@ export class Level extends LevelInterface {
 
                 let stored_cell = this.stored_level.linear_cells[n];
                 n++;
-
                 for (let template_tile of stored_cell) {
+                    if (! template_tile)
+                        continue;
+
                     let tile = Tile.from_template(template_tile);
                     if (tile.type.is_hint) {
                         // Copy over the tile-specific hint, if any
@@ -461,6 +504,9 @@ export class Level extends LevelInterface {
             }
         }
         // TODO complain if no player
+        // Used for doppelgängers
+        this.player1_move = null;
+        this.player2_move = null;
 
         // Connect buttons and teleporters
         let num_cells = this.width * this.height;
@@ -486,7 +532,7 @@ export class Level extends LevelInterface {
                 if (target_cell_n && target_cell_n < this.width * this.height) {
                     let [tx, ty] = this.stored_level.scalar_to_coords(target_cell_n);
                     for (let tile of this.cell(tx, ty)) {
-                        if (goals === tile.type.name) {
+                        if (tile && goals === tile.type.name) {
                             connectable.connection = tile;
                             break;
                         }
@@ -500,7 +546,7 @@ export class Level extends LevelInterface {
                 for (let cell of this.iter_cells_in_diamond(connectable.cell)) {
                     let target = null;
                     for (let tile of cell) {
-                        if (goals.has(tile.type.name)) {
+                        if (tile && goals.has(tile.type.name)) {
                             target = tile;
                             break;
                         }
@@ -550,6 +596,10 @@ export class Level extends LevelInterface {
                 if (terrain.type.name === 'logic_gate') {
                     let dir = terrain.direction;
                     let cxns = terrain.type._gate_types[terrain.gate_type];
+                    if (! cxns) {
+                        // Voodoo tile
+                        continue;
+                    }
                     for (let i = 0; i < 4; i++) {
                         let cxn = cxns[i];
                         if (cxn && cxn.match(/^out/)) {
@@ -590,6 +640,11 @@ export class Level extends LevelInterface {
                             }
                         }
                         add_to_edge_map(circuit.tiles, tile, edges);
+                        if (tile.type.on_power) {
+                            // Red teleporters contain wires and /also/ have an on_power
+                            // FIXME this isn't quite right since there's seemingly a 1-frame delay
+                            wired_outputs.add(tile);
+                        }
 
                         if (tile.type.is_power_source) {
                             // TODO could just do this in a pass afterwards
@@ -599,7 +654,10 @@ export class Level extends LevelInterface {
                     // Dead end handling (potentially logic gates, etc.)
                     (cell, edge) => {
                         for (let tile of cell) {
-                            if (tile.type.name === 'logic_gate') {
+                            if (! tile) {
+                                continue;
+                            }
+                            else if (tile.type.name === 'logic_gate') {
                                 // Logic gates are the one non-wired tile that get attached to circuits,
                                 // mostly so blue teleporters can follow them
                                 if (! tile.circuits) {
@@ -633,11 +691,10 @@ export class Level extends LevelInterface {
         for (let i = this.linear_cells.length - 1; i >= 0; i--) {
             let cell = this.linear_cells[i];
             for (let tile of cell) {
+                if (! tile)
+                    continue;
                 if (tile.type.on_ready) {
                     tile.type.on_ready(tile, this);
-                }
-                if (cell === this.player.cell && tile.type.is_hint) {
-                    this.hint_shown = tile.hint_text ?? this.stored_level.hint;
                 }
             }
         }
@@ -711,7 +768,7 @@ export class Level extends LevelInterface {
             for (let i = this.linear_cells.length - 1; i >= 0; i--) {
                 let cell = this.linear_cells[i];
                 for (let tile of cell) {
-                    if (tile.type.on_begin) {
+                    if (tile && tile.type.on_begin) {
                         tile.type.on_begin(tile, this);
                     }
                 }
@@ -728,8 +785,8 @@ export class Level extends LevelInterface {
             for (let key of [
                     '_rng1', '_rng2', '_blob_modifier', 'force_floor_direction',
                     'tic_counter', 'time_remaining', 'timer_paused',
-                    'chips_remaining', 'bonus_points', 'hint_shown', 'state',
-                    'remaining_players', 'player',
+                    'chips_remaining', 'bonus_points', 'state',
+                    'player1_move', 'player2_move', 'remaining_players', 'player',
             ]) {
                 this.pending_undo.level_props[key] = this[key];
             }
@@ -753,8 +810,11 @@ export class Level extends LevelInterface {
         }
     }
 
-    // Only the Lexy-style loop has a notion of "finishing" a tic, since (unlike the Lynx loop) the
-    // decision phase happens in the /middle/
+    // FIXME merge this a bit more with the lynx loop, which should be more in finish_tic anyway
+    // FIXME fix turn-based mode
+    // FIXME you are now not synched with something coming out of a trap or cloner, but i don't know
+    // how to fix that with this loop
+    // Finish a tic, i.e., apply input just before the player can make a decision and then do it
     finish_tic(p1_input) {
         this.p1_input = p1_input;
         this.p1_released |= ~p1_input;  // Action keys released since we last checked them
@@ -782,27 +842,6 @@ export class Level extends LevelInterface {
             this._do_actor_movement(actor, actor.decision);
         }
 
-        this._do_cleanup_phase();
-    }
-
-    // Lexy-style loop, the one I stumbled upon accidentally.  Here, cooldowns happen /first/ as
-    // their own phase, then decisions are made, then movement happens.  This approach has several
-    // advantages: there's no cooldown on the same tic that movement begins, which lets the renderer
-    // interpolate between tics more easily; there's no jitter when pushing a block, as is seen in
-    // CC2; and generally more things happen in parallel, which improves the illusion that all the
-    // game objects are acting simultaneously.
-    _begin_tic_lexy() {
-        // CC2 wiring runs every frame, not every tic, so we need to do it three times, but dealing
-        // with it is delicate.  We want the result of a button press to draw, but not last longer
-        // than intended, so we only want one update between the end of the cooldown pass and the
-        // end of the tic.  That means the other two have to go here.  When a level starts, there
-        // are only two wiring updates before everything gets its first chance to move, so we skip
-        // the very first one here.
-        if (this.tic_counter !== 0) {
-            this._do_wire_phase();
-        }
-        this._do_wire_phase();
-
         // Advance everyone's cooldowns
         // Note that we iterate in reverse order, DESPITE keeping dead actors around with null
         // cells, to match the Lynx and CC2 behavior.  This is actually important in some cases;
@@ -815,7 +854,9 @@ export class Level extends LevelInterface {
             if (! actor.cell)
                 continue;
 
-            this._do_actor_cooldown(actor, 3);
+            if (! actor.type.ttl) {
+                this._do_actor_cooldown(actor, 3);
+            }
         }
 
         // Mini extra pass: deal with teleporting separately.  Otherwise, actors may have been in
@@ -832,9 +873,27 @@ export class Level extends LevelInterface {
             }
         }
 
+        this._swap_players();
+
         this._do_wire_phase();
         // TODO should this also happen three times?
         this._do_static_phase();
+
+        this._do_cleanup_phase();
+    }
+
+    // Lexy-style loop, similar to Lynx but with some things split out into separate phases
+    _begin_tic_lexy() {
+        // CC2 wiring runs every frame, not every tic, so we need to do it three times, but dealing
+        // with it is delicate.  We want the result of a button press to draw, but not last longer
+        // than intended, so we only want one update between the end of the cooldown pass and the
+        // end of the tic.  That means the other two have to go here.  When a level starts, there
+        // are only two wiring updates before everything gets its first chance to move, so we skip
+        // the very first one here.
+        if (this.tic_counter !== 0) {
+            this._do_wire_phase();
+        }
+        this._do_wire_phase();
     }
 
     // Lynx-style loop: everyone decides, then everyone moves/cools.
@@ -844,7 +903,7 @@ export class Level extends LevelInterface {
 
     _finish_tic_lynx() {
         this._do_decision_phase();
-        this._do_combined_action_phase(3);
+        this._do_combined_action_phase(3);// FIXME this should have three wire passes too, chief
         this._do_wire_phase();
         this._do_static_phase();
 
@@ -878,18 +937,50 @@ export class Level extends LevelInterface {
 
     // Decision phase: all actors decide on their movement "simultaneously"
     _do_decision_phase(forced_only = false) {
+        // Before decisions happen, remember the player's /current/ direction, which may be affected
+        // by sliding.  This will be used by doppelgängers earlier in actor order than the player.
+        if (! forced_only) {
+            // Check whether the player is /attempting/ to move: either they did, or they're blocked
+            if (this.player.movement_cooldown > 0 || this.player.is_blocked) {
+                this.remember_player_move(this.player.direction);
+            }
+            else {
+                this.remember_player_move(null);
+            }
+        }
+
         for (let i = this.actors.length - 1; i >= 0; i--) {
             let actor = this.actors[i];
 
             // Clear any old decisions ASAP.  Note that this prop is only used internally within a
             // single tic, so it doesn't need to be undoable
             actor.decision = null;
+            // This is a renderer prop and only exists between two loops
+            if (actor.destination_cell) {
+                this._set_tile_prop(actor, 'destination_cell', null);
+            }
 
             if (! actor.cell)
                 continue;
 
+            if (actor.type.ttl) {
+                // Animations, bizarrely, do their cooldown at decision time, so they're removed
+                // early on the tic that they expire
+                this._do_actor_cooldown(actor, this.compat.emulate_60fps ? 1 : 3);
+                continue;
+            }
+
             if (actor.movement_cooldown > 0)
                 continue;
+
+            // Erase old traces of movement now
+            if (actor.movement_speed) {
+                this._set_tile_prop(actor, 'previous_cell', null);
+                this._set_tile_prop(actor, 'movement_speed', null);
+                if (actor.is_pulled) {
+                    this._set_tile_prop(actor, 'is_pulled', false);
+                }
+            }
 
             if (! forced_only && actor.type.on_tic) {
                 actor.type.on_tic(actor, this);
@@ -914,11 +1005,16 @@ export class Level extends LevelInterface {
                 continue;
 
             this._do_actor_movement(actor, actor.decision);
+            if (actor.type.ttl)
+                continue;
+
             this._do_actor_cooldown(actor, cooldown);
             if (actor.just_stepped_on_teleporter) {
                 this.attempt_teleport(actor);
             }
         }
+
+        this._swap_players();
     }
 
     // Have an actor attempt to move
@@ -977,7 +1073,12 @@ export class Level extends LevelInterface {
 
         // Track whether the player is blocked, both for visual effect and for doppelgangers
         if (actor === this.player && ! success) {
-            this.sfx.play_once('blocked');
+            if (actor.last_blocked_direction !== actor.direction) {
+                // This is only used for checking when to play the mmf sound, doesn't need undoing;
+                // it's cleared when we make a successful move or a null decision
+                actor.last_blocked_direction = actor.direction;
+                this.sfx.play_once('blocked');
+            }
             this._set_tile_prop(actor, 'is_blocked', true);
         }
 
@@ -988,11 +1089,8 @@ export class Level extends LevelInterface {
         if (actor.movement_cooldown <= 0)
             return;
 
-        if (actor.cooldown_delay_hack) {
-            // See the extensive comment in attempt_out_of_turn_step
-            actor.cooldown_delay_hack += 1;
+        if (actor.last_extra_cooldown_tic === this.tic_counter)
             return;
-        }
 
         this._set_tile_prop(actor, 'movement_cooldown', Math.max(0, actor.movement_cooldown - cooldown));
 
@@ -1006,51 +1104,31 @@ export class Level extends LevelInterface {
             if (! this.compat.tiles_react_instantly) {
                 this.step_on_cell(actor, actor.cell);
             }
-            // Erase any trace of being in mid-movement, however:
-            // - This has to happen after stepping on cells, because some effects care about
-            // the cell we're arriving from
-            // - Don't do it if stepping on the cell caused us to move again
-            if (actor.movement_cooldown <= 0) {
-                this._set_tile_prop(actor, 'previous_cell', null);
-                this._set_tile_prop(actor, 'movement_speed', null);
-                if (actor.is_pulled) {
-                    this._set_tile_prop(actor, 'is_pulled', false);
-                }
-            }
+            // Note that we don't erase the movement bookkeeping until next decision phase, because
+            // the renderer interpolates back in time and needs to know to draw us finishing the
+            // move; this should be fine since everything checks for "in motion" by looking at
+            // movement_cooldown, which is already zero.  (Also saves some undo budget, since
+            // movement_speed is never null for an actor in constant motion.)
         }
     }
 
-    _do_cleanup_phase() {
-        // Strip out any destroyed actors from the acting order
-        // FIXME this is O(n), where n is /usually/ small, but i still don't love it.  not strictly
-        // necessary, either; maybe only do it every few tics?
-        let p = 0;
-        for (let i = 0, l = this.actors.length; i < l; i++) {
-            let actor = this.actors[i];
-            // While we're here, delete this guy
-            delete actor.cooldown_delay_hack;
-
-            if (actor.cell) {
-                if (p !== i) {
-                    this.actors[p] = actor;
-                }
-                p++;
-            }
-            else {
-                let local_p = p;
-                this._push_pending_undo(() => this.actors.splice(local_p, 0, actor));
-            }
+    _swap_players() {
+        if (this.remaining_players <= 0) {
+            this.win();
         }
-        this.actors.length = p;
 
         // Possibly switch players
         // FIXME cc2 has very poor interactions between this feature and cloners; come up with some
         // better rules as a default
         if (this.swap_player1) {
+            this.swap_player1 = false;
             // Reset the set of keys released since last tic (but not the swap key, or holding it
             // will swap us endlessly)
             // FIXME this doesn't even quite work, it just swaps less aggressively?  wtf
             this.p1_released = 0xff & ~INPUT_BITS.swap;
+            // Clear remembered moves
+            this.player1_move = null;
+            this.player2_move = null;
 
             // Iterate backwards over the actor list looking for a viable next player to control
             let i0 = this.actors.indexOf(this.player);
@@ -1076,10 +1154,27 @@ export class Level extends LevelInterface {
                 }
             }
         }
+    }
 
-        if (this.remaining_players <= 0) {
-            this.win();
+    _do_cleanup_phase() {
+        // Strip out any destroyed actors from the acting order
+        // FIXME this is O(n), where n is /usually/ small, but i still don't love it.  not strictly
+        // necessary, either; maybe only do it every few tics?
+        let p = 0;
+        for (let i = 0, l = this.actors.length; i < l; i++) {
+            let actor = this.actors[i];
+            if (actor.cell) {
+                if (p !== i) {
+                    this.actors[p] = actor;
+                }
+                p++;
+            }
+            else {
+                let local_p = p;
+                this._push_pending_undo(() => this.actors.splice(local_p, 0, actor));
+            }
         }
+        this.actors.length = p;
 
         // Advance the clock
         // TODO i suspect cc2 does this at the beginning of the tic, but even if you've won?  if you
@@ -1099,6 +1194,7 @@ export class Level extends LevelInterface {
         this.commit();
     }
 
+    // TODO this only has one caller
     _extract_player_directions(input) {
         // Extract directions from an input mask
         let dir1 = null, dir2 = null;
@@ -1133,14 +1229,6 @@ export class Level extends LevelInterface {
         if (! forced_only) {
             this._set_tile_prop(actor, 'is_blocked', false);
         }
-
-        // If the game has already been won (or lost), don't bother with a move; it'll misalign the
-        // player from their actual position and not accomplish anything gameplay-wise.
-        // (Note this is only necessary because our update order is inverted from CC2, and because
-        // we don't erase the last player when they exit.)
-        // TODO might not be good enough if something else tries to step on us later this tic!
-        if (this.state !== 'playing' || this.remaining_players <= 0)
-            return null;
 
         // TODO player in a cloner can't move (but player in a trap can still turn)
 
@@ -1178,13 +1266,14 @@ export class Level extends LevelInterface {
         // Q, you'll throw the first, wait a second or so, then release the rest rapid-fire.  absurd
         if (! forced_only) {
             let new_input = input & this.p1_released;
-            this.p1_released = 0xff;
             if (new_input & INPUT_BITS.cycle) {
                 this.cycle_inventory(this.player);
                 this.p1_released &= ~INPUT_BITS.cycle;
             }
             if ((new_input & INPUT_BITS.drop) && may_move) {
-                this.drop_item(this.player);
+                if (this.drop_item(this.player)) {
+                    this.sfx.play_once('drop');
+                }
                 this.p1_released &= ~INPUT_BITS.drop;
             }
             if ((new_input & INPUT_BITS.swap) && this.remaining_players > 1) {
@@ -1210,6 +1299,7 @@ export class Level extends LevelInterface {
             // At this point, we have exactly 1 or 2 directions, and deciding between them requires
             // checking which ones are blocked.  Note that we do this even if only one direction is
             // requested, meaning that we get to push blocks before anything else has moved!
+            let push_mode = this.compat.no_early_push ? 'bump' : 'push';
             let open;
             if (dir2 === null) {
                 // Only one direction is held, but for consistency, "check" it anyway
@@ -1272,6 +1362,13 @@ export class Level extends LevelInterface {
                 this._set_tile_prop(actor, 'last_move_was_force', false);
             }
         }
+
+        if (actor.decision === null) {
+            actor.last_blocked_direction = null;
+        }
+
+        // Remember our decision so doppelgängers can copy it
+        this.remember_player_move(actor.decision);
     }
 
     make_actor_decision(actor, forced_only = false) {
@@ -1303,7 +1400,7 @@ export class Level extends LevelInterface {
         }
         if (forced_only)
             return;
-        if (actor.cell.some(tile => tile.type.traps && tile.type.traps(tile, actor))) {
+        if (terrain.type.traps && terrain.type.traps(terrain, actor)) {
             // An actor in a cloner or a closed trap can't turn
             // TODO because of this, if a tank is trapped when a blue button is pressed, then
             // when released, it will make one move out of the trap and /then/ turn around and
@@ -1346,43 +1443,34 @@ export class Level extends LevelInterface {
 
     check_movement(actor, orig_cell, direction, push_mode) {
         let dest_cell = this.get_neighboring_cell(orig_cell, direction);
-        let success = (dest_cell &&
-            orig_cell.try_leaving(actor, direction) &&
+        if (! dest_cell) {
+            if (push_mode === 'push') {
+                if (actor.type.on_blocked) {
+                    actor.type.on_blocked(actor, this, direction, null);
+                }
+            }
+            return false;
+        }
+
+        let success = (
+            orig_cell.try_leaving(actor, direction, this, push_mode) &&
             dest_cell.try_entering(actor, direction, this, push_mode));
 
         // If we have the hook, pull anything behind us, now that we're out of the way.
-        // This has to happen here to make hook-slapping work and allow hooking a moving block to
-        // stop us, and it has to use pending decisions rather than an immediate move because we're
-        // still in the way (so the block can't move) and also to prevent a block from being able to
-        // follow us through a swivel (which we haven't actually swiveled at decision time).
-        // FIXME so, we shouldn't be able to pull a block through a swivel, but the swivel doesn't
-        // turn until on_depart, which is after this because we have to know we can actually move
-        // first.  but also, hooking can stop us from moving, but it /does/ still allow us to push.
-        // also this all seems to apply exactly the same to monsters, except of course they can't
-        // hook slap.  so where the hell does this actually go?
-        if (success && actor.has_item('hook')) {
+        // In CC2, this has to happen here to make hook-slapping work and allow hooking a moving
+        // block to stop us, and it has to use pending decisions rather than an immediate move
+        // because we're still in the way (so the block can't move) and also to prevent a block from
+        // being able to follow us through a swivel (which we haven't swiveled at decision time).
+        if (this.compat.use_legacy_hooking && success && actor.has_item('hook')) {
             let behind_cell = this.get_neighboring_cell(orig_cell, DIRECTIONS[direction].opposite);
             if (behind_cell) {
                 let behind_actor = behind_cell.get_actor();
-                // FIXME starting to think fx should not count as actors
-                if (behind_actor && ! behind_actor.type.ttl &&
-                    // FIXME i don't actually know the precise rules here.  dirt blocks and ghosts
-                    // can pull other blocks even though they can't usually push them.  given the
-                    // existence of monster hooking, i suspect /anything/ can be hooked but on
-                    // monsters it has a weird effect?  figure this out?
-                    (! behind_actor.type.allows_push || behind_actor.type.allows_push(behind_actor, direction)))
-                {
+                if (behind_actor && actor.can_pull(behind_actor, direction)) {
                     if (behind_actor.movement_cooldown) {
-                        // FIXME this sucks actually, make it not default behavior
                         return false;
                     }
                     else if (behind_actor.type.is_block && push_mode === 'push') {
                         this._set_tile_prop(behind_actor, 'is_pulled', true);
-                        // FIXME i am pretty sure lexy benefits immensely from doing an immediate
-                        // move, which also makes it match pushing, but that only works if this
-                        // happens at movement time, which prevents hook slapping, which is nonsense
-                        // anyway
-                        //this.attempt_out_of_turn_step(behind_actor, direction);
                         this._set_tile_prop(behind_actor, 'pending_push', direction);
                         behind_actor.decision = direction;
                     }
@@ -1420,12 +1508,8 @@ export class Level extends LevelInterface {
         let speed = actor.type.movement_speed;
 
         let move = DIRECTIONS[direction].movement;
-        if (! this.check_movement(actor, actor.cell, direction, 'push')) {
-            if (actor.type.on_blocked) {
-                actor.type.on_blocked(actor, this, direction);
-            }
+        if (! this.check_movement(actor, actor.cell, direction, 'push'))
             return false;
-        }
 
         // We're clear!  Compute our speed and move us
         // FIXME this feels clunky
@@ -1444,45 +1528,40 @@ export class Level extends LevelInterface {
         this._set_tile_prop(actor, 'movement_speed', speed * 3);
         this.move_to(actor, goal_cell, speed);
 
+        // Do Lexy-style hooking here: only attempt to pull things just after we've actually moved
+        // successfully, which means the hook can never stop us from moving and hook slapping is not
+        // a thing, and also make them a real move rather than a weird pending thing
+        if (! this.compat.use_legacy_hooking && actor.has_item('hook')) {
+            let behind_cell = this.get_neighboring_cell(orig_cell, DIRECTIONS[direction].opposite);
+            if (behind_cell) {
+                let behind_actor = behind_cell.get_actor();
+                if (behind_actor && actor.can_pull(behind_actor, direction) && behind_actor.type.is_block) {
+                    this._set_tile_prop(behind_actor, 'is_pulled', true);
+                    this.attempt_out_of_turn_step(behind_actor, direction);
+                }
+            }
+        }
+
+        if (actor === this.player) {
+            actor.last_blocked_direction = null;
+        }
+
         return true;
     }
 
     attempt_out_of_turn_step(actor, direction) {
-        if (this.compat.use_lynx_loop) {
-            let success = this._do_actor_movement(actor, direction);
-            if (success) {
-                this._do_actor_cooldown(actor, this.compat.emulate_60fps ? 1 : 3);
-            }
-            return success;
+        let success = this.attempt_step(actor, direction);
+        if (success) {
+            this._do_extra_cooldown(actor);
         }
+        return success;
+    }
 
-        if (this.attempt_step(actor, direction)) {
-            // Here's the problem.
-            // In CC2, cooldown is measured in frames, not tics, and it decrements every frame, not
-            // every tic.  You usually don't notice because actors can only initiate moves every
-            // three frames (= 1 tic), so the vast majority of the game is tic-aligned.
-            // This is where it leaks.  If actor X's cooldown causes them to press a button which
-            // then initiates an out-of-turn move (i.e. the forced move from a clone or trap
-            // ejection) for actor Y, and actor Y comes later in the actor order, then actor Y will
-            // decrement its cooldown during that same cooldown phase, putting it /between/ tics.
-            // If I copy this behavior and decrement by an entire tic, then actor Y will stay a full
-            // tic ahead indefinitely, whereas in CC2 it would only be a frame ahead and would
-            // eventually have to wait a frame before it could move again.  If I ignore this
-            // behavior wholesale and don't let actor Y decrement at all, then a player being
-            // ejected from a trap could still have her tail bitten.  So here's the compromise: I
-            // set this turn-local flag on actor Y; then if they do have a cooldown later, it's
-            // ignored BUT the flag is incremented; and then if the flag is 2, the actor is exempt
-            // from tail-biting.  (I am reasonably confident that tail-biting is the only possible
-            // side effect here, since actor Y has left the cell even if they haven't visibly moved
-            // yet, and tail-biting is the sole effect that looks "back in time".)
-            // XXX that's still not perfect; if actor X is tic-misaligned, like if there's a chain
-            // of 3 or more actors cloning directly onto red buttons for other cloners, then this
-            // cannot possibly work
-            actor.cooldown_delay_hack = 1;
-            return true;
-        }
-        else {
-            return false;
+    _do_extra_cooldown(actor) {
+        this._do_actor_cooldown(actor, this.compat.emulate_60fps ? 1 : 3);
+        // Only Lexy has double-cooldown protection
+        if (! this.compat.use_lynx_loop) {
+            this._set_tile_prop(actor, 'last_extra_cooldown_tic', this.tic_counter);
         }
     }
 
@@ -1494,38 +1573,32 @@ export class Level extends LevelInterface {
             return;
 
         let original_cell = actor.cell;
+        // Physically remove the actor first, so that it won't get in the way of e.g. a splash
+        // spawned from stepping off of a lilypad
         this.remove_tile(actor);
-        this.add_tile(actor, goal_cell);
 
         // Announce we're leaving, for the handful of tiles that care about it
-        for (let tile of Array.from(original_cell)) {
+        for (let tile of original_cell) {
+            if (! tile)
+                continue;
             if (tile === actor)
                 continue;
             if (actor.ignores(tile.type.name))
                 continue;
 
+            // FIXME ah, stepping off a lilypad will add a splash but we're still here?  but then
+            // why did the warning not catch it
             if (tile.type.on_depart) {
                 tile.type.on_depart(tile, this, actor);
             }
         }
 
-        // Check for a couple effects that always apply immediately
-        if (actor === this.player) {
-            this.hint_shown = null;
-        }
+        // Announce we're approaching.  Slide mode is set here, since it's about the tile we're
+        // moving towards and needs to last through our next decision
+        this.make_slide(actor, null);
         for (let tile of goal_cell) {
-            // FIXME this could go in on_approach now
-            if (actor === this.player && tile.type.is_hint) {
-                this.hint_shown = tile.hint_text ?? this.stored_level.hint;
-            }
-        }
-
-        if (actor === this.player && goal_cell[0].type.name === 'floor') {
-            this.sfx.play_once('step-floor');
-        }
-
-        // Announce we're approaching
-        for (let tile of Array.from(actor.cell)) {
+            if (! tile)
+                continue;
             if (tile === actor)
                 continue;
             if (actor.ignores(tile.type.name))
@@ -1536,20 +1609,35 @@ export class Level extends LevelInterface {
                 // Helmet disables this, do nothing
             }
             else if (actor.type.is_real_player && tile.type.is_monster) {
-                this.fail(tile.type.name);
+                this.fail(tile.type.name, actor);
             }
             else if (actor.type.is_monster && tile.type.is_real_player) {
-                this.fail(actor.type.name);
+                this.fail(actor.type.name, tile);
             }
             else if (actor.type.is_block && tile.type.is_real_player && ! actor.is_pulled) {
                 // Note that blocks squish players if they move for ANY reason, even if pushed by
                 // another player!  The only exception is being pulled
-                this.fail('squished');
+                this.fail('squished', tile);
             }
 
             if (tile.type.on_approach) {
                 tile.type.on_approach(tile, this, actor);
             }
+            if (tile.type.slide_mode) {
+                this.make_slide(actor, tile.type.slide_mode);
+            }
+        }
+
+        // Now add the actor back; we have to wait this long because e.g. monsters erase splashes
+        if (goal_cell.get_actor()) {
+            // FIXME a monster or block killing the player will still move into her cell!!!  i don't
+            // know what to do about this, i feel like i tried making monster/player block each
+            // other before and it did not go well.  maybe it was an ordering issue though?
+            this.add_tile(actor, original_cell);
+            return;
+        }
+        else {
+            this.add_tile(actor, goal_cell);
         }
 
         // If we're a monster stepping on the player's tail, that also kills her immediately; the
@@ -1560,9 +1648,7 @@ export class Level extends LevelInterface {
         if (actor.type.is_monster && goal_cell === this.player.previous_cell &&
             // Player has decided to leave their cell, but hasn't actually taken a step yet
             this.player.movement_cooldown === this.player.movement_speed &&
-            ! actor.has_item('helmet') && ! this.player.has_item('helmet') &&
-            // See the extensive comment in attempt_out_of_turn_step
-            this.player.cooldown_delay_hack !== 2)
+            ! actor.has_item('helmet') && ! this.player.has_item('helmet'))
         {
             this.fail(actor.type.name);
         }
@@ -1574,11 +1660,12 @@ export class Level extends LevelInterface {
 
     // Step on every tile in a cell we just arrived in
     step_on_cell(actor, cell) {
-        // Also reset slide here, since slide mode is differently important for forced moves
-        this.make_slide(actor, null);
-
         // Step on topmost things first -- notably, it's safe to step on water with flippers on top
-        for (let tile of Array.from(cell).reverse()) {
+        // TODO is there a custom order here similar to collision checking?
+        for (let layer = LAYERS.MAX - 1; layer >= 0; layer--) {
+            let tile = cell[layer];
+            if (! tile)
+                continue;
             if (tile === actor)
                 continue;
             if (actor.ignores(tile.type.name))
@@ -1587,7 +1674,7 @@ export class Level extends LevelInterface {
             if (tile.type.is_item &&
                 // FIXME implement item priority i'm begging you
                 ((actor.type.has_inventory && ! (tile.type.name === 'key_red' && ! actor.type.is_player)) ||
-                    cell.some(t => t.type.item_modifier === 'pickup')) &&
+                    (cell.get_item_mod() && cell.get_item_mod().type.item_modifier === 'pickup')) &&
                 this.attempt_take(actor, tile))
             {
                 if (tile.type.is_key) {
@@ -1604,8 +1691,41 @@ export class Level extends LevelInterface {
             else if (tile.type.on_arrive) {
                 tile.type.on_arrive(tile, this, actor);
             }
-            if (tile.type.slide_mode) {
-                this.make_slide(actor, tile.type.slide_mode);
+        }
+
+        // Play step sound
+        if (actor === this.player) {
+            let terrain = cell.get_terrain();
+            if (actor.slide_mode === 'ice') {
+                this.sfx.play_once('slide-ice');
+            }
+            else if (actor.slide_mode === 'force') {
+                this.sfx.play_once('slide-force');
+            }
+            else if (terrain.type.name === 'popdown_floor') {
+                this.sfx.play_once('step-popdown');
+            }
+            else if (terrain.type.name === 'gravel' || terrain.type.name === 'railroad') {
+                this.sfx.play_once('step-gravel');
+            }
+            else if (terrain.type.name === 'water') {
+                if (actor.ignores(terrain.type.name)) {
+                    this.sfx.play_once('step-water');
+                }
+            }
+            else if (terrain.type.name === 'fire') {
+                if (actor.has_item('fire_boots')) {
+                    this.sfx.play_once('step-fire');
+                }
+            }
+            else if (terrain.type.slide_mode === 'force') {
+                this.sfx.play_once('step-force');
+            }
+            else if (terrain.type.slide_mode === 'ice') {
+                this.sfx.play_once('step-ice');
+            }
+            else {
+                this.sfx.play_once('step-floor');
             }
         }
     }
@@ -1614,7 +1734,11 @@ export class Level extends LevelInterface {
         let teleporter = actor.just_stepped_on_teleporter;
         delete actor.just_stepped_on_teleporter;
 
-        if (teleporter.type.name === 'teleport_red' && ! teleporter.type._is_active(teleporter, this)) {
+        // We're about to abruptly move the actor, and the renderer needs to know to interpolate its
+        // movement towards the teleporter it just stepped on, not the teleporter it's moved to
+        this._set_tile_prop(actor, 'destination_cell', actor.cell);
+
+        if (teleporter.type.name === 'teleport_red' && ! teleporter.is_active) {
             // Curious special-case red teleporter behavior: if you pass through a wired but
             // inactive one, you keep sliding indefinitely.  Players can override out of it, but
             // other actors cannot.  (Normally, a teleport slide ends after one decision phase.)
@@ -1623,13 +1747,18 @@ export class Level extends LevelInterface {
             return;
         }
 
+        // Explicitly set us as teleport sliding, since in some very obscure cases (auto-dropping a
+        // yellow teleporter because you picked up an item with a full inventory and immediately
+        // teleporting through it) it may not have been applied
+        this.make_slide(actor, 'teleport');
+
         let original_direction = actor.direction;
         let success = false;
         let dest, direction;
         for ([dest, direction] of teleporter.type.teleport_dest_order(teleporter, this, actor)) {
             // Teleporters already containing an actor are blocked and unusable
             // FIXME should check collision?  otherwise this catches non-blocking vfx...
-            if (dest.cell.some(tile => tile.type.is_actor && tile !== actor && ! tile.type.ttl))
+            if (dest.cell.some(tile => tile && tile.type.is_actor && tile !== actor && ! tile.type.ttl))
                 continue;
 
             // XXX lynx treats this as a slide and does it in a pass in the main loop
@@ -1671,11 +1800,24 @@ export class Level extends LevelInterface {
         this.set_actor_direction(actor, direction);
 
         this.spawn_animation(actor.cell, 'teleport_flash');
-        this.spawn_animation(dest.cell, 'teleport_flash');
+        if (dest.cell !== actor.cell) {
+            this.spawn_animation(dest.cell, 'teleport_flash');
+        }
 
         // Now physically move the actor, but their movement waits until next decision phase
         this.remove_tile(actor);
         this.add_tile(actor, dest.cell);
+    }
+
+    remember_player_move(direction) {
+        if (this.player.type.name === 'player') {
+            this.player1_move = direction;
+            this.player2_move = null;
+        }
+        else {
+            this.player1_move = null;
+            this.player2_move = direction;
+        }
     }
 
     cycle_inventory(actor) {
@@ -1691,7 +1833,7 @@ export class Level extends LevelInterface {
         }
     }
 
-    drop_item(actor, force = false) {
+    drop_item(actor) {
         if (this.stored_level.use_cc1_boots)
             return false;
         if (actor.movement_cooldown > 0)
@@ -1699,37 +1841,64 @@ export class Level extends LevelInterface {
         if (! actor.toolbelt || actor.toolbelt.length === 0)
             return false;
 
-        if (actor.cell.get_item() && ! force)
-            return false;
-
         // Drop the oldest item, i.e. the first one
         let name = actor.toolbelt[0];
-        if (name === 'teleport_yellow') {
-            // We can only be dropped on regular floor
-            let terrain = actor.cell.get_terrain();
+        if (this._place_dropped_item(name, actor.cell, actor)) {
+            actor.toolbelt.shift();
+            this._push_pending_undo(() => actor.toolbelt.unshift(name));
+            return true;
+        }
+        return false;
+    }
+
+    // Attempt to place an item in the world, as though dropped by an actor
+    _place_dropped_item(name, cell, dropping_actor) {
+        let type = TILE_TYPES[name];
+        if (type.layer === LAYERS.terrain) {
+            // Terrain items (i.e., yellow teleports) can only be dropped on regular floor
+            let terrain = cell.get_terrain();
             if (terrain.type.name !== 'floor')
                 return false;
 
-            this.transmute_tile(terrain, 'teleport_yellow');
+            this.transmute_tile(terrain, name);
         }
         else {
-            let type = TILE_TYPES[name];
+            // Note that we can't drop a bowling ball if there's already an item, even though a
+            // dropped bowling ball is really an actor
+            if (cell.get_item())
+                return false;
+
             if (type.on_drop) {
-                name = type.on_drop(this, actor);
+                // FIXME quirky things happen if a dropped bowling ball can't enter the facing cell
+                // (mostly it disappears) (also arguably a bug)
+                // FIXME does this even need to be a function lol
+                name = type.on_drop(this);
                 if (name) {
                     type = TILE_TYPES[name];
                 }
             }
             let tile = new Tile(type);
-            this.add_tile(tile, actor.cell);
             if (type.is_actor) {
-                this.add_actor(tile);
-                this.attempt_out_of_turn_step(tile, actor.direction);
+                // This is tricky -- the item has become an actor, but whatever dropped it is
+                // already in this cell's actor layer.  But we also know for sure that there's no
+                // item in this cell, so we'll cheat a little: remove the dropping actor, set the
+                // item moving, then put the dropping actor back before anyone notices.
+                this.remove_tile(dropping_actor);
+                this.add_tile(tile, cell);
+                if (! this.attempt_out_of_turn_step(tile, dropping_actor.direction)) {
+                    // It was unable to move, so there's nothing we can do but destroy it
+                    // TODO maybe blow it up with a nonblocking vfx?  in cc2 it just vanishes
+                    this.remove_tile(tile);
+                }
+                else {
+                    this.add_actor(tile);
+                }
+                this.add_tile(dropping_actor, cell);
+            }
+            else {
+                this.add_tile(tile, cell);
             }
         }
-
-        actor.toolbelt.shift();
-        this._push_pending_undo(() => actor.toolbelt.unshift(name));
 
         return true;
     }
@@ -1770,7 +1939,11 @@ export class Level extends LevelInterface {
         for (let tile of this.power_sources) {
             if (! tile.cell)
                 continue;
-            let emitting = tile.type.get_emitting_edges(tile, this);
+            let emitting = 0;
+            if (tile.type.get_emitting_edges) {
+                // This method may not exist any more, if the tile was destroyed by e.g. dynamite
+                emitting = tile.type.get_emitting_edges(tile, this);
+            }
             if (emitting !== tile.emitting_edges) {
                 any_changed = true;
                 this._set_tile_prop(tile, 'emitting_edges', emitting);
@@ -1867,7 +2040,9 @@ export class Level extends LevelInterface {
     // Some non-actor tiles still want to act every tic.  Note that this should happen AFTER wiring.
     _do_static_phase() {
         for (let tile of this.static_on_tic_tiles) {
-            tile.type.on_tic(tile, this);
+            if (tile.type.on_tic) {
+                tile.type.on_tic(tile, this);
+            }
         }
     }
 
@@ -1885,6 +2060,7 @@ export class Level extends LevelInterface {
     // The starting cell is iterated last.
     *iter_tiles_in_reading_order(start_cell, name, reverse = false) {
         let i = this.coords_to_scalar(start_cell.x, start_cell.y);
+        let index = TILE_TYPES[name].layer;
         while (true) {
             if (reverse) {
                 i -= 1;
@@ -1898,10 +2074,9 @@ export class Level extends LevelInterface {
             }
 
             let cell = this.linear_cells[i];
-            for (let tile of cell) {
-                if (tile.type.name === name) {
-                    yield tile;
-                }
+            let tile = cell[index];
+            if (tile && tile.type.name === name) {
+                yield tile;
             }
 
             if (cell === start_cell)
@@ -2065,8 +2240,16 @@ export class Level extends LevelInterface {
 
     collect_chip() {
         if (this.chips_remaining > 0) {
-            this.sfx.play_once('get-chip');
+            if (this.chips_remaining > 1) {
+                this.sfx.play_once('get-chip');
+            }
+            else {
+                this.sfx.play_once('get-chip-last');
+            }
             this.chips_remaining--;
+        }
+        else {
+            this.sfx.play_once('get-chip-extra');
         }
     }
 
@@ -2090,7 +2273,7 @@ export class Level extends LevelInterface {
         }
     }
 
-    fail(reason) {
+    fail(reason, player = null) {
         if (this.state !== 'playing')
             return;
 
@@ -2101,13 +2284,17 @@ export class Level extends LevelInterface {
             this.sfx.play_once('lose');
         }
 
+        if (player === null) {
+            player = this.player;
+        }
+
         this._push_pending_undo(() => {
             this.fail_reason = null;
-            this.player.fail_reason = null;
+            player.fail_reason = null;
         });
         this.state = 'failure';
         this.fail_reason = reason;
-        this.player.fail_reason = reason;
+        player.fail_reason = reason;
     }
 
     win() {
@@ -2124,7 +2311,8 @@ export class Level extends LevelInterface {
             return null;
         }
 
-        let time = Math.ceil((this.time_remaining ?? 0) / 20);
+        // FIXME should probably remember tics here, not just seconds?
+        let time = Math.ceil((this.time_remaining ?? 0) / TICS_PER_SECOND);
         return {
             time: time,
             abstime: this.tic_counter,
@@ -2149,12 +2337,12 @@ export class Level extends LevelInterface {
 
     remove_tile(tile) {
         let cell = tile.cell;
-        let index = cell._remove(tile);
-        this._push_pending_undo(() => cell._add(tile, index));
+        cell._remove(tile);
+        this._push_pending_undo(() => cell._add(tile));
     }
 
-    add_tile(tile, cell, index = null) {
-        cell._add(tile, index);
+    add_tile(tile, cell) {
+        cell._add(tile);
         this._push_pending_undo(() => cell._remove(tile));
     }
 
@@ -2165,13 +2353,21 @@ export class Level extends LevelInterface {
 
     spawn_animation(cell, name) {
         let type = TILE_TYPES[name];
+        // Spawned VFX erase any existing VFX
+        if (type.layer === LAYERS.vfx) {
+            let vfx = cell[type.layer];
+            if (vfx) {
+                this.remove_tile(vfx);
+            }
+        }
         let tile = new Tile(type);
         // Co-opt movement_cooldown/speed for these despite that they aren't moving, since those
         // properties are also used to animate everything else anyway.  Decrement the cooldown
         // immediately, as Lynx does; note that Lynx also ticks /and destroys/ animations early in
         // the decision phase, but this seems to work out just as well
         this._set_tile_prop(tile, 'movement_speed', tile.type.ttl);
-        this._set_tile_prop(tile, 'movement_cooldown', tile.type.ttl - 1);
+        this._set_tile_prop(tile, 'movement_cooldown', tile.type.ttl);
+        this._do_extra_cooldown(tile);
         cell._add(tile);
         this.actors.push(tile);
         this._push_pending_undo(() => {
@@ -2181,30 +2377,79 @@ export class Level extends LevelInterface {
     }
 
     transmute_tile(tile, name) {
-        let current = tile.type.name;
-        this._push_pending_undo(() => tile.type = TILE_TYPES[current]);
-        tile.type = TILE_TYPES[name];
+        if (tile.type.ttl) {
+            // If this is already an animation, don't turn it into a different one; this can happen
+            // if a block is pushed onto a cell containing both a mine and slime, both of which try
+            // to destroy it
+            return;
+        }
+
+        let old_type = tile.type;
+        let new_type = TILE_TYPES[name];
+        if (old_type.layer !== new_type.layer) {
+            // Move it to the right layer!
+            let cell = tile.cell;
+            cell._remove(tile);
+            tile.type = new_type;
+            cell._add(tile);
+            this._push_pending_undo(() => {
+                cell._remove(tile);
+                tile.type = old_type;
+                cell._add(tile);
+            });
+        }
+        else {
+            tile.type = new_type;
+            this._push_pending_undo(() => tile.type = old_type);
+        }
 
         // For transmuting into an animation, set up the timer immediately
         if (tile.type.ttl) {
-            if (! TILE_TYPES[current].is_actor) {
+            if (! old_type.is_actor) {
                 console.warn("Transmuting a non-actor into an animation!");
             }
             this._set_tile_prop(tile, 'previous_cell', null);
             this._set_tile_prop(tile, 'movement_speed', tile.type.ttl);
-            this._set_tile_prop(tile, 'movement_cooldown', tile.type.ttl - 1);
+            this._set_tile_prop(tile, 'movement_cooldown', tile.type.ttl);
+            // This is effectively a completely new object, so remove double cooldown prevention;
+            // this cooldown MUST happen, because the renderer can't handle cooldown == speed
+            if (tile.last_extra_cooldown_tic) {
+                this._set_tile_prop(tile, 'last_extra_cooldown_tic', null);
+            }
+            this._do_extra_cooldown(tile);
         }
     }
 
     // Have an actor try to pick up a particular tile; it's prevented if there's a no sign, and the
     // tile is removed if successful
+    // FIXME do not allow overflow dropping before picking up the new item
     attempt_take(actor, tile) {
-        let mod = tile.cell.get_item_mod();
+        let cell = tile.cell;
+        let mod = cell.get_item_mod();
         if (mod && mod.type.item_modifier === 'ignore')
             return false;
 
+        // Handling a full inventory is a teeny bit complicated.  We want the following:
+        // - At no point are two items in the same cell
+        // - A yellow teleporter cannot be dropped in exchange for another yellow teleporter
+        // - If the oldest item can't be dropped, the pickup fails
+        // Thus we have to check whether dropping is possible FIRST, but only place the dropped item
+        // AFTER the pickup.
+        let dropped_item;
+        if (! tile.type.is_key && actor.toolbelt && actor.toolbelt.length >= 4) {
+            let oldest_item_type = TILE_TYPES[actor.toolbelt[0]];
+            if (oldest_item_type.layer === LAYERS.terrain && cell.get_terrain().type.name !== 'floor') {
+                // This is a yellow teleporter, and we are not standing on floor; abort!
+                return false;
+            }
+            // Otherwise, it's either an item or a yellow teleporter we're allowed to drop, so steal
+            // it out of their inventory to be dropped later
+            dropped_item = actor.toolbelt.shift();
+            this._push_pending_undo(() => actor.toolbelt.unshift(dropped_item));
+        }
+
         if (this.give_actor(actor, tile.type.name)) {
-            if (tile.type.draw_layer === 0) {
+            if (tile.type.layer === LAYERS.terrain) {
                 // This should only happen for the yellow teleporter
                 this.transmute_tile(tile, 'floor');
             }
@@ -2214,8 +2459,16 @@ export class Level extends LevelInterface {
             if (mod && mod.type.item_modifier === 'pickup') {
                 this.remove_tile(mod);
             }
+
+            // Drop any overflowed item
+            if (dropped_item) {
+                // TODO what if this fails??
+                this._place_dropped_item(dropped_item, cell, actor);
+            }
+
             return true;
         }
+        // TODO what happens to the dropped item if the give fails somehow?
         return false;
     }
 
@@ -2239,17 +2492,24 @@ export class Level extends LevelInterface {
                 actor.toolbelt = [];
             }
 
-            // Nothing can hold more than four items, so try to drop one first.  Note that this may
-            // temporarily cause there to be two items in the cell if we're in the middle of picking
-            // one up, and it means we can't pick up a yellow teleport and swap out another for it
-            // FIXME two items at once is bad, please fix caller somehow
-            if (actor.toolbelt.length === 4) {
-                if (! this.drop_item(actor, true))
+            // Nothing can hold more than four items, so try to drop one first.  Note that normally,
+            // this should already have happened in attempt_take, so this should only come up when
+            // forcibly given an item via debug tools
+            if (actor.toolbelt.length >= 4) {
+                if (! this.drop_item(actor))
                     return false;
             }
 
             actor.toolbelt.push(name);
             this._push_pending_undo(() => actor.toolbelt.pop());
+
+            // FIXME hardcodey, but, this doesn't seem to fit anywhere else
+            if (name === 'cleats' && actor.slide_mode === 'ice') {
+                this.make_slide(actor, null);
+            }
+            else if (name === 'suction_boots' && actor.slide_mode === 'force') {
+                this.make_slide(actor, null);
+            }
         }
         return true;
     }

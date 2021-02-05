@@ -1,4 +1,4 @@
-import { DIRECTIONS } from './defs.js';
+import { DIRECTIONS, LAYERS } from './defs.js';
 import * as format_base from './format-base.js';
 import TILE_TYPES from './tiletypes.js';
 import * as util from './util.js';
@@ -175,7 +175,8 @@ export function parse_level_metadata(bytes) {
 function parse_level(bytes, number) {
     let level = new format_base.StoredLevel(number);
     level.has_custom_connections = true;
-    level.use_ccl_compat = true;
+    level.format = 'ccl';
+    level.uses_ll_extensions = false;
     // Map size is always fixed as 32x32 in CC1
     level.size_x = 32;
     level.size_y = 32;
@@ -250,14 +251,15 @@ function parse_level(bytes, number) {
                 // pgchip grants directions to ice blocks on cloners by putting a clone block
                 // beneath them instead
                 if (l === 1 && 0x0e <= tile_byte && tile_byte <= 0x11 &&
-                    cell[0] && cell[0].type.name === 'ice_block')
+                    cell[LAYERS.actor] && cell[LAYERS.actor].type.name === 'ice_block')
                 {
-                    cell[0].direction = extra.direction;
-                    cell.unshift({type: TILE_TYPES['cloner']});
+                    cell[LAYERS.actor].direction = extra.direction;
+                    let type = TILE_TYPES['cloner'];
+                    cell[type.layer] = {type};
                     continue;
                 }
 
-                cell.unshift({...tile});
+                cell[tile.type.layer] = {...tile};
             }
         }
         if (c !== 1024)
@@ -266,9 +268,8 @@ function parse_level(bytes, number) {
 
     // Fix the "floor/empty" nonsense here by adding floor to any cell with no terrain on bottom
     for (let cell of level.linear_cells) {
-        if (cell.length === 0 || cell[0].type.draw_layer !== 0) {
-            // No terrain; insert a floor
-            cell.unshift({ type: TILE_TYPES['floor'] });
+        if (! cell[LAYERS.terrain]) {
+            cell[LAYERS.terrain] = { type: TILE_TYPES['floor'] };
         }
         // TODO we could also deal with weird cases where there's terrain /on top of/ something
         // else: things underwater, the quirk where a glider will erase the item underneath...

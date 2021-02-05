@@ -57,7 +57,7 @@ export const INPUT_BITS = {
     wait:   0x8000,
 };
 
-export const DRAW_LAYERS = {
+export const LAYERS = {
     terrain: 0,
     item: 1,
     item_mod: 2,
@@ -66,6 +66,7 @@ export const DRAW_LAYERS = {
     swivel: 5,
     thin_wall: 6,
     canopy: 7,
+
     MAX: 8,
 };
 
@@ -82,6 +83,7 @@ export const COLLISION = {
 
     block_cc1:          0x0010,
     block_cc2:          0x0020,  // ice + frame (+ circuit, etc)
+    dropped_item:       0x0040,  // rolling ball, dynamite
 
     // Monsters are a little complicated, because some of them have special rules, e.g. fireballs
     // aren't blocked by fire.
