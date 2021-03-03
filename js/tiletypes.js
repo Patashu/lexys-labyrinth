@@ -54,7 +54,7 @@ function _define_door(key) {
         // Doors can be opened by ice blocks, but not dirt blocks or monsters
         blocks_collision: COLLISION.block_cc1 | COLLISION.monster_general,
         blocks(me, level, other) {
-            if (other.type.name === 'ghost')
+            if (other.type.name === 'ghost' || other.type.name === 'shark')
                 return false;
             return ! ((other.has_item(key) || other.has_item('skeleton_key')));
         },
@@ -2526,6 +2526,54 @@ const TILE_TYPES = {
             }
         },
     },
+    shark: {
+        ...COMMON_MONSTER,
+        //basically phases through everything
+        collision_mask: 0x0000,
+        on_ready(me, level) {
+            //TODO: do we want to be able to have swivels, gates and canopies as homes? if so, how do we decide if the overlay or the base terrain is the shark's home?
+            level._set_tile_prop(me, 'home', me.cell.get_terrain().type.name);
+        },
+        on_clone(me, original) {
+            //actually takes on the properties of the tile it gets cloned onto
+            original.home = original.cell.get_terrain().type.name;
+            me.home = 'cloner';
+        },
+        terrains_are_same_set(t1, t2) {
+            //also considering if (turntables, flame jet on/off, power switch on/off, both blue walls, both green walls, both invisible walls) are 'sets'
+            //I THINK these ones are intuitive and desired, but maybe I'm wrong
+            //you could argue for green/purple toggle walls to be sets, but it was pointed out to me it's more interesting if they aren't since they're mutable at runtime. So maybe ice/force floors are the only ones we want
+            //ALSO, sharks can move freely into or out of cloners, because that's kickass
+            let ices = new Set(['ice', 'ice_nw', 'ice_ne', 'ice_sw', 'ice_se', 'cracked_ice']);
+            let force_floors = new Set([
+            'force_floor_n', 'force_floor_s', 'force_floor_e', 'force_floor_w', 'force_floor_all']);
+            return t1 === t2
+            || (ices.has(t1) && ices.has(t2))
+            || (force_floors.has(t1) && force_floors.has(t2))
+            || t1 === 'cloner' || t2 === 'cloner';
+        },
+        blocked_by(me, level, other) {
+            //if the tile has an actor in it: it blocks us UNLESS the actor is a player.
+            if (other.cell.get_actor() !== null) {
+                return other.cell.get_actor() !== level.player;
+            }
+            //otherwise, we can swim to any tile that's our terrain. nothing else in it can block us.
+            if (this.terrains_are_same_set(other.cell.get_terrain().type.name, me.home)) {
+                return false;
+            }
+            return true;
+        },
+        decide_movement(me, level) {
+            // can we smell blood?
+            if (Math.abs(level.player.cell.x - me.cell.x) < 3 && Math.abs(level.player.cell.y - me.cell.y) < 3) {
+                return pursue_player(me, level);
+            }
+            //otherwise...
+            // always try turning as left as possible, and fall back to less-left turns
+            let d = DIRECTIONS[me.direction];
+            return [d.left, me.direction, d.right, d.opposite];
+        },
+    },
 
     // Keys, whose behavior varies
     key_red: {
@@ -3019,7 +3067,7 @@ const TILE_TYPES = {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.block_cc1 | COLLISION.monster_general,
         blocks(me, level, other) {
-            return ! (other.type.name === 'ghost' || level.chips_remaining <= 0);
+            return ! (other.type.name === 'ghost' || other.type.name === 'shark' || level.chips_remaining <= 0);
         },
         on_arrive(me, level, other) {
             if (level.chips_remaining === 0) {

@@ -1613,6 +1613,7 @@ const EDITOR_PALETTE = [{
         'boulder',
         'glass_block',
         'logic_gate/diode',
+        'shark',
     ],
 }];
 
@@ -2247,6 +2248,10 @@ const EDITOR_TILE_DESCRIPTIONS = {
         name: "Glass block",
         desc: "Similar to a dirt block, but stores the first item it moves over, dropping it when destroyed and cloning it in a cloning machine. Has ice block/frame block collision. Turns into floor in water. Doesn't have dirt block immunities.",
     },
+    shark: {
+        name: "Shark",
+        desc: "Swims through whatever initial tile it was placed on, only emerging to kill the player. Follows the left wall, unless the player is within 2 tiles, then it chases the player.",
+    }
 };
 
 const SPECIAL_PALETTE_ENTRIES = {
@@ -2494,7 +2499,6 @@ for (let cycle of [
     ['force_floor_n', 'force_floor_e', 'force_floor_s', 'force_floor_w'],
     ['ice_nw', 'ice_ne', 'ice_se', 'ice_sw'],
     ['swivel_nw', 'swivel_ne', 'swivel_se', 'swivel_sw'],
-    ['terraformer_n', 'terraformer_e', 'terraformer_s', 'terraformer_w'],
     ['turntable_cw', 'turntable_ccw'],
 ]) {
     for (let [i, name] of cycle.entries()) {

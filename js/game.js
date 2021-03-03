@@ -102,8 +102,13 @@ export class Tile {
     }
 
     ignores(name) {
-        if (this.type.ignores && this.type.ignores.has(name))
+        if (
+        (this.type.ignores && this.type.ignores.has(name))
+        ||
+        (this.home && this.type.terrains_are_same_set(this.home, name))
+        ) {
             return true;
+        }
 
         if (this.toolbelt) {
             for (let item of this.toolbelt) {

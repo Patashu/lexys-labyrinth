@@ -896,6 +896,12 @@ const TILE_ENCODING = {
         modifier: modifier_wire,
         is_extension: true,
     },
+    0xf1: {
+        name: 'shark',
+        has_next: true,
+        is_extension: true,
+        extra_args: [arg_direction],
+    },
 };
 const REVERSE_TILE_ENCODING = {};
 for (let [tile_byte, spec] of Object.entries(TILE_ENCODING)) {
