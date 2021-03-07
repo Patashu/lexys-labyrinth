@@ -514,12 +514,9 @@ body[data-mode=player] #editor-play {
     margin: auto;
     background: url(icons/tool-bg-selected.png) repeat;
     animation: scrolling-sidewalk linear 0.4s infinite;
-    /*
-    box-shadow:
-        inset 5vw 0 5vw -5vw black,
-        inset -5vw 0 5vw -5vw black;
-    */
-    mask: linear-gradient(to right, transparent 0, #ffffff40 10%, white 20%, white 80%, #ffffff40 90%, transparent 100%);
+    --mask: linear-gradient(to right, transparent 0, #ffffff40 10%, white 20%, white 80%, #ffffff40 90%, transparent 100%);
+    -webkit-mask-image: var(--mask);
+    mask-image: var(--mask);
 }
 .scrolling-sidewalk > img {
     display: block;
@@ -1329,14 +1326,18 @@ dl.score-chart .-star {
     font-family: monospace;
     color: hsl(225, 20%, 60%);
 }
-.chips output.--done {
-    color: hsl(225, 10%, 30%);
+/* nb: the hex colors are all taken from the lexy palette */
+.chips output {
+    color: #feafc9;
+}
+.time output {
+    color: #6ca2a7;
 }
 .time output.--warning {
-    color: hsl(345, 60%, 60%);
+    color: #f48457;
 }
 .time output.--danger {
-    color: hsl(330, 60%, 60%);
+    color: #e1565f;
     /* TODO this can get out of sync and keeps going at 0, but is a neat idea */
     /* animation: time-pulse 1s linear infinite; */
 }
@@ -1348,8 +1349,12 @@ dl.score-chart .-star {
         transform: scale(1);
     }
 }
+.chips output.--done,
 .time output.--frozen {
     color: hsl(225, 10%, 30%);
+}
+.bonus output {
+    color: #e2c9ff;
 }
 #player .bonus {
     visibility: hidden;

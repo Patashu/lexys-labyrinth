@@ -8,12 +8,23 @@ export class StoredCell extends Array {
 }
 
 export class Replay {
-    constructor(initial_force_floor_direction, blob_seed, inputs = null) {
+    constructor(initial_force_floor_direction, blob_seed, inputs = null, step_parity = null, tw_seed = 0) {
         this.initial_force_floor_direction = initial_force_floor_direction;
         this.blob_seed = blob_seed;
+        this.step_parity = step_parity;
+        this.tw_seed = tw_seed;
         this.inputs = inputs ?? new Uint8Array;
         this.duration = this.inputs.length;
         this.cursor = 0;
+    }
+
+    configure_level(level) {
+        level.force_floor_direction = this.initial_force_floor_direction;
+        level._blob_modifier = this.blob_seed;
+        level._tw_rng = this.tw_seed;
+        if (this.step_parity !== null) {
+            level.step_parity = this.step_parity;
+        }
     }
 
     get(t) {
@@ -152,6 +163,10 @@ export class StoredPack {
         // error: any error received while loading the level
         // bytes: Uint8Array of the encoded level data
         this.level_metadata = [];
+
+        // Sparse/optional array of Replays, generally from an ancillary file like a TWS
+        // TODO unclear if this is a good API for this
+        this.level_replays = [];
     }
 
     // TODO this may or may not work sensibly when correctly following a c2g
@@ -166,10 +181,13 @@ export class StoredPack {
             // The editor stores inflated levels at times, so respect that
             return meta.stored_level;
         }
-        else {
-            // Otherwise, attempt to load the level
-            return this._level_loader(meta);
+
+        // Otherwise, attempt to load the level
+        let stored_level = this._level_loader(meta);
+        if (! stored_level.has_replay && this.level_replays[index]) {
+            stored_level._replay = this.level_replays[index];
         }
+        return stored_level;
     }
 }
 

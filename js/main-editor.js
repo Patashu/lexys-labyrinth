@@ -1,4 +1,4 @@
-import * as fflate from 'https://cdn.skypack.dev/fflate?min';
+import * as fflate from './vendor/fflate.mjs';
 
 import { DIRECTIONS, LAYERS, TICS_PER_SECOND } from './defs.js';
 import { TILES_WITH_PROPS } from './editor-tile-overlays.js';
@@ -1608,12 +1608,23 @@ const EDITOR_PALETTE = [{
         'teleport_blue_exit',
         'electrified_floor',
         'halo',
-        'item_lock',
         'score_5x',
         'boulder',
         'glass_block',
         'logic_gate/diode',
         'shark',
+        'sokoban_block/red',
+        'sokoban_button/red',
+        'sokoban_wall/red',
+        'sokoban_block/blue',
+        'sokoban_button/blue',
+        'sokoban_wall/blue',
+        'sokoban_block/green',
+        'sokoban_button/green',
+        'sokoban_wall/green',
+        'sokoban_block/yellow',
+        'sokoban_button/yellow',
+        'sokoban_wall/yellow',
     ],
 }];
 
@@ -2232,10 +2243,6 @@ const EDITOR_TILE_DESCRIPTIONS = {
         name: "Boulder",
         desc: "Similar to a dirt block, but rolls when pushed. Boulders transfer momentum to each other. Has ice block/frame block collision. Turns into gravel in water. Spreads slime.",
     },
-    item_lock: {
-        name: "Item lock",
-        desc: "When placed atop an item, you must have that item to enter the tile. When you do, pay the item and destroy the item lock. Also can be placed on top of a bonus, and you must pay that amount of bonus to enter.",
-    },
     dash_floor: {
         name: "Dash floor",
         desc: "Anything walking on it moves at double speed. Stacks with speed shoes!",
@@ -2251,7 +2258,19 @@ const EDITOR_TILE_DESCRIPTIONS = {
     shark: {
         name: "Shark",
         desc: "Swims through whatever initial tile it was placed on, only emerging to kill the player. Follows the left wall, unless the player is within 2 tiles, then it chases the player.",
-    }
+    },
+    sokoban_block: {
+        name: "Sokoban block",
+        desc: "Similar to a dirt block.  Turns to colored floor in water.  Can't pass over colored floor of a different color.  Has no effect on sokoban buttons of a different color.",
+    },
+    sokoban_button: {
+        name: "Sokoban button",
+        desc: "Changes sokoban walls of the same color to floor, but only while all buttons of the same color are held.  Not affected by sokoban blocks of a different color.",
+    },
+    sokoban_wall: {
+        name: "Sokoban wall",
+        desc: "Acts like wall.  Turns to floor while all sokoban buttons of the same color are pressed.",
+    },
 };
 
 const SPECIAL_PALETTE_ENTRIES = {
@@ -2267,7 +2286,7 @@ const SPECIAL_PALETTE_ENTRIES = {
     'railroad/curve':       { name: 'railroad', tracks: 1 << 0, track_switch: null, entered_direction: 'north' },
     'railroad/switch':      { name: 'railroad', tracks: 0, track_switch: 0, entered_direction: 'north' },
     'logic_gate/not':       { name: 'logic_gate', direction: 'north', gate_type: 'not' },
-     'logic_gate/diode':       { name: 'logic_gate', direction: 'north', gate_type: 'diode' },
+    'logic_gate/diode':     { name: 'logic_gate', direction: 'north', gate_type: 'diode' },
     'logic_gate/and':       { name: 'logic_gate', direction: 'north', gate_type: 'and' },
     'logic_gate/or':        { name: 'logic_gate', direction: 'north', gate_type: 'or' },
     'logic_gate/xor':       { name: 'logic_gate', direction: 'north', gate_type: 'xor' },
@@ -2276,6 +2295,18 @@ const SPECIAL_PALETTE_ENTRIES = {
     'logic_gate/latch-ccw': { name: 'logic_gate', direction: 'north', gate_type: 'latch-ccw' },
     'logic_gate/counter':   { name: 'logic_gate', direction: 'north', gate_type: 'counter', memory: 0 },
     'circuit_block/xxx':    { name: 'circuit_block', direction: 'south', wire_directions: 0xf },
+    'sokoban_block/red':    { name: 'sokoban_block', color: 'red' },
+    'sokoban_button/red':   { name: 'sokoban_button', color: 'red' },
+    'sokoban_wall/red':     { name: 'sokoban_wall', color: 'red' },
+    'sokoban_block/blue':   { name: 'sokoban_block', color: 'blue' },
+    'sokoban_button/blue':  { name: 'sokoban_button', color: 'blue' },
+    'sokoban_wall/blue':    { name: 'sokoban_wall', color: 'blue' },
+    'sokoban_block/yellow': { name: 'sokoban_block', color: 'yellow' },
+    'sokoban_button/yellow':{ name: 'sokoban_button', color: 'yellow' },
+    'sokoban_wall/yellow':  { name: 'sokoban_wall', color: 'yellow' },
+    'sokoban_block/green':  { name: 'sokoban_block', color: 'green' },
+    'sokoban_button/green': { name: 'sokoban_button', color: 'green' },
+    'sokoban_wall/green':   { name: 'sokoban_wall', color: 'green' },
 };
 const _RAILROAD_ROTATED_LEFT = [3, 0, 1, 2, 5, 4];
 const _RAILROAD_ROTATED_RIGHT = [1, 2, 3, 0, 5, 4];

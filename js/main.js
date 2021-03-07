@@ -1,11 +1,12 @@
 // TODO bugs and quirks i'm aware of:
 // - steam: if a player character starts on a force floor they won't be able to make any voluntary movements until they are no longer on a force floor
-import * as fflate from 'https://cdn.skypack.dev/fflate?min';
+import * as fflate from './vendor/fflate.mjs';
 
-import { DIRECTIONS, INPUT_BITS, TICS_PER_SECOND } from './defs.js';
+import { COMPAT_FLAGS, COMPAT_RULESET_LABELS, COMPAT_RULESET_ORDER, DIRECTIONS, INPUT_BITS, TICS_PER_SECOND, compat_flags_for_ruleset } from './defs.js';
 import * as c2g from './format-c2g.js';
 import * as dat from './format-dat.js';
 import * as format_base from './format-base.js';
+import * as format_tws from './format-tws.js';
 import { Level } from './game.js';
 import { PrimaryView, Overlay, DialogOverlay, ConfirmOverlay, flash_button, load_json_from_storage, save_json_to_storage } from './main-base.js';
 import { Editor } from './main-editor.js';
@@ -403,11 +404,10 @@ class SFXPlayer {
             let dy = cell.y - this.player_y;
             let dist = Math.sqrt(dx*dx + dy*dy);
             // x/(x + a) is a common and delightful way to get an easy asymptote and output between
-            // 0 and 1.  Here, the result is above 2/3 for almost everything on screen; drops down
-            // to 1/3 for things 20 tiles away (which is, roughly, the periphery when standing in
-            // the center of a CC1 map), and bottoms out at 1/15 for standing in one corner of a
-            // CC2 map of max size and hearing something on the far opposite corner.
-            volume *= 1 - dist / (dist + 10);
+            // 0 and 1.  This arbitrary factor of 2 seems to work nicely in practice, falling off
+            // quickly so you don't get drowned in button spam, but still leaving buttons audible
+            // even at the far reaches of a 100×100 level.  (Maybe because gain is exponential?)
+            volume *= 1 - dist / (dist + 2);
         }
         let gain = this.ctx.createGain();
         gain.gain.value = volume;
@@ -451,25 +451,12 @@ class Player extends PrimaryView {
         this.music_audio_el = this.music_el.querySelector('audio');
         this.music_index = null;
 
-        // 0: normal realtime mode
-        // 1: turn-based mode, at the start of a tic
-        // 2: turn-based mode, in mid-tic, with the game frozen waiting for input
-        this.turn_mode = 0;
+        this.turn_based_mode = false;
+        this.turn_based_mode_waiting = false;
         this.turn_based_checkbox = this.root.querySelector('.control-turn-based');
         this.turn_based_checkbox.checked = false;
         this.turn_based_checkbox.addEventListener('change', ev => {
-            if (this.turn_based_checkbox.checked) {
-                // If we're leaving real-time mode then we're between tics
-                this.turn_mode = 1;
-            }
-            else {
-                if (this.turn_mode === 2) {
-                    // Finish up the tic with dummy input
-                    this.level.finish_tic(0);
-                    this.advance_by(1);
-                }
-                this.turn_mode = 0;
-            }
+            this.turn_based_mode = this.turn_based_checkbox.checked;
         });
 
         // Bind buttons
@@ -540,6 +527,8 @@ class Player extends PrimaryView {
 
         this.use_interpolation = true;
         // Default to the LL tileset for safety, but change when we load a level
+        // (Note also that this must be created in the constructor so the CC2 timing option can be
+        // applied to it)
         this.renderer = new CanvasRenderer(this.conductor.tilesets['ll']);
         this._loaded_tileset = false;
         this.level_el.append(this.renderer.canvas);
@@ -597,7 +586,7 @@ class Player extends PrimaryView {
 
             // Per-tic navigation; only useful if the game isn't running
             if (ev.key === ',') {
-                if (this.state === 'stopped' || this.state === 'paused' || this.turn_mode > 0) {
+                if (this.state === 'stopped' || this.state === 'paused' || this.turn_based_mode) {
                     this.set_state('paused');
                     this.undo();
                     this.update_ui();
@@ -606,11 +595,16 @@ class Player extends PrimaryView {
                 return;
             }
             if (ev.key === '.') {
-                if (this.state === 'waiting' || this.state === 'paused' || this.turn_mode > 0) {
-                    if (this.state === 'waiting' || this.turn_mode === 1) {
-                        this.set_state('paused');
+                if (this.state === 'waiting' || this.state === 'paused' || this.turn_based_mode) {
+                    if (this.state === 'waiting') {
+                        if (this.turn_based_mode) {
+                            this.set_state('playing');
+                        }
+                        else {
+                            this.set_state('paused');
+                        }
                     }
-                    this.advance_by(1, true);
+                    this.advance_by(1, true, ev.altKey && this.level.compat.emulate_60fps);
                     this._redraw();
                 }
                 return;
@@ -1128,11 +1122,14 @@ class Player extends PrimaryView {
             if (ev.button !== 1)
                 return;
 
+            if (this.state === 'stopped')
+                return;
             let [x, y] = this.renderer.cell_coords_from_event(ev);
-            this.level.move_to(this.level.player, this.level.cell(x, y), 1);
-            // TODO this behaves a bit weirdly when paused (doesn't redraw even with a force), i
-            // think because we're still claiming a speed of 1 so time has to pass before the move
-            // actually "happens"
+            this.level.move_to(this.level.player, this.level.cell(x, y));
+            if (this.state === 'waiting') {
+                this.set_state('paused');
+            }
+            this._redraw();
         });
         this.renderer.canvas.addEventListener('mousemove', ev => {
             let tooltip = this.debug.actor_tooltip;
@@ -1219,6 +1216,7 @@ class Player extends PrimaryView {
         this.music_enabled = options.music_enabled ?? true;
         this.sfx_player.volume = options.sound_volume ?? 1.0;
         this.sfx_player.enabled = options.sound_enabled ?? true;
+        this.renderer.use_cc2_anim_speed = options.use_cc2_anim_speed ?? false;
 
         if (this.level) {
             this.update_tileset();
@@ -1305,7 +1303,7 @@ class Player extends PrimaryView {
     _clear_state() {
         this.set_state('waiting');
 
-        this.turn_mode = this.turn_based_checkbox.checked ? 1 : 0;
+        this.turn_based_mode_waiting = false;
         this.last_advance = 0;
         this.current_keyring = {};
         this.current_toolbelt = [];
@@ -1348,8 +1346,7 @@ class Player extends PrimaryView {
         this.debug.replay_duration_el.textContent = format_replay_duration(t);
 
         if (! record) {
-            this.level.force_floor_direction = replay.initial_force_floor_direction;
-            this.level._blob_modifier = replay.blob_seed;
+            replay.configure_level(this.level);
             // FIXME should probably start playback on first real input
             this.set_state('playing');
         }
@@ -1387,7 +1384,8 @@ class Player extends PrimaryView {
         return input;
     }
 
-    advance_by(tics, force = false) {
+    advance_by(tics, force = false, use_frames = false) {
+        let crossed_tic_boundary = false;
         for (let i = 0; i < tics; i++) {
             // FIXME turn-based mode should be disabled during a replay
             let input = this.get_input();
@@ -1399,38 +1397,32 @@ class Player extends PrimaryView {
                 this.debug.replay.set(this.level.tic_counter, input);
             }
 
-            // Turn-based mode is considered assistance, but only if the game actually attempts to
-            // progress while it's enabled
-            if (this.turn_mode > 0) {
+            if (this.turn_based_mode) {
+                // Turn-based mode is considered assistance, but only if the game actually attempts
+                // to progress while it's enabled
                 this.level.aid = Math.max(1, this.level.aid);
-            }
 
-            let has_input = wait || input;
-            // Turn-based mode complicates this slightly; it aligns us to the middle of a tic
-            if (this.turn_mode === 2) {
-                if (has_input || force) {
-                    // Finish the current tic, then continue as usual.  This means the end of the
-                    // tic doesn't count against the number of tics to advance -- because it already
-                    // did, the first time we tried it
-                    this.level.finish_tic(input);
-                    this.turn_mode = 1;
-                }
-                else {
+                // If we're in turn-based mode and could provide input here, but don't have any,
+                // then wait until we do
+                if (this.level.can_accept_input() && ! input && ! wait && ! force) {
+                    this.turn_based_mode_waiting = true;
                     continue;
                 }
             }
 
-            // We should now be at the start of a tic
-            this.level.begin_tic(input);
-            if (this.turn_mode > 0 && this.level.can_accept_input() && ! has_input) {
-                // If we're in turn-based mode and could provide input here, but don't have any,
-                // then wait until we do
-                this.turn_mode = 2;
+            this.turn_based_mode_waiting = false;
+            if (use_frames) {
+                this.level.advance_frame(input);
+                if (this.level.frame_offset === 0) {
+                    crossed_tic_boundary = true;
+                }
             }
             else {
-                this.level.finish_tic(input);
+                this.level.advance_tic(input);
+                crossed_tic_boundary = true;
             }
 
+            // FIXME don't do this til we would next advance?  or some other way let it play out
             if (this.level.state !== 'playing') {
                 // We either won or lost!
                 this.set_state('stopped');
@@ -1460,6 +1452,10 @@ class Player extends PrimaryView {
         // tracking fractional updates, but asking to run at 10× and only getting 2× would suck)
         let num_advances = 1;
         let dt = 1000 / (TICS_PER_SECOND * this.play_speed);
+        let use_frames = this.level.compat.emulate_60fps && this.state === 'playing';
+        if (use_frames) {
+            dt /= 3;
+        }
         if (dt < 10) {
             num_advances = Math.ceil(10 / dt);
             dt = 10;
@@ -1474,7 +1470,7 @@ class Player extends PrimaryView {
         this._advance_handle = window.setTimeout(this._advance_bound, dt);
 
         if (this.state === 'playing') {
-            this.advance_by(num_advances);
+            this.advance_by(num_advances, false, use_frames);
         }
         else if (this.state === 'rewinding') {
             if (this.level.has_undo()) {
@@ -1493,10 +1489,10 @@ class Player extends PrimaryView {
 
     undo() {
         this.level.undo();
-        // Undo always returns to the start of a tic
-        if (this.turn_mode === 2) {
-            this.turn_mode = 1;
-        }
+    }
+
+    _max_tic_offset() {
+        return this.level.compat.emulate_60fps ? 0.333 : 0.999;
     }
 
     // Redraws every frame, unless the game isn't running
@@ -1505,37 +1501,33 @@ class Player extends PrimaryView {
         // TODO i'm not sure it'll be right when rewinding either
         // TODO or if the game's speed changes.  wow!
         let tic_offset;
-        if (this.turn_mode === 2) {
+        let max = this._max_tic_offset();
+        if (this.turn_based_mode_waiting || ! this.use_interpolation) {
             // We're dawdling between tics, so nothing is actually animating, but the clock hasn't
             // advanced yet; pretend whatever's currently animating has finished
             // FIXME this creates bizarre side effects like actors making a huge first step when
             // stepping forwards one tic at a time, but without it you get force floors animating
             // and then abruptly reversing in turn-based mode (maybe we should just not interpolate
             // at all in that case??)
-            tic_offset = 0.999;
-        }
-        else if (this.state === 'stopped') {
-            // Once the game is over, interpolating backwards makes less sense
-            // FIXME this /appears/ to skip a whole tic of movement though.  hm.
-            tic_offset = 0.999;
-        }
-        else if (this.use_interpolation) {
-            tic_offset = Math.min(0.9999, (performance.now() - this.last_advance) / 1000 * TICS_PER_SECOND * this.play_speed);
-            if (this.state === 'rewinding') {
-                tic_offset = 1 - tic_offset;
-            }
+            tic_offset = max;
         }
         else {
-            tic_offset = 0.999;
+            // Note that, conveniently, when running at 60 FPS this ranges from 0 to 1/3, so nothing
+            // actually needs to change
+            tic_offset = Math.min(max, (performance.now() - this.last_advance) / 1000 * TICS_PER_SECOND * this.play_speed);
+            if (this.state === 'rewinding') {
+                tic_offset = max - tic_offset;
+            }
         }
 
         this._redraw(tic_offset);
 
-        // Check for a stopped game *after* drawing, so that if the game ends, we still draw its
-        // final result before stopping the draw loop
-        // TODO for bonus points, also finish the player animation (but don't advance the game any further)
-        // TODO stop redrawing when in turn-based mode 2?
-        if (this.state === 'playing' || this.state === 'rewinding') {
+        // Check for a stopped game *after* drawing, so that when the game ends, we still animate
+        // its final tic before stopping the draw loop
+        // TODO stop redrawing when waiting on turn-based mode?  but then, when is it restarted
+        if (this.state === 'playing' || this.state === 'rewinding' ||
+            (this.state === 'stopped' && tic_offset < 0.99))
+        {
             this._redraw_handle = requestAnimationFrame(this._redraw_bound);
         }
         else {
@@ -1550,7 +1542,7 @@ class Player extends PrimaryView {
             // Default to drawing the "end" state of the tic when we're paused; the renderer
             // interpolates backwards, so this will show the actual state of the game
             if (this.state === 'paused') {
-                tic_offset = 0.999;
+                tic_offset = this._max_tic_offset();
             }
             else {
                 tic_offset = 0;
@@ -1666,12 +1658,14 @@ class Player extends PrimaryView {
 
         if (this.debug.enabled) {
             let t = this.level.tic_counter;
-            if (this.turn_mode === 2) {
-                this.debug.time_tics_el.textContent = `${t}½`;
+            let current_tic = String(t);
+            if (this.level.frame_offset === 1) {
+                current_tic += "⅓";
             }
-            else {
-                this.debug.time_tics_el.textContent = `${t}`;
+            else if (this.level.frame_offset === 2) {
+                current_tic += "⅔";
             }
+            this.debug.time_tics_el.textContent = current_tic;
             this.debug.time_moves_el.textContent = `${Math.floor(t/4)}`;
             this.debug.time_secs_el.textContent = (t / 20).toFixed(2);
 
@@ -1692,10 +1686,9 @@ class Player extends PrimaryView {
     }
 
     autopause() {
-        if (this.turn_mode > 0) {
-            // Turn-based mode doesn't need this
+        // Turn-based mode doesn't need this
+        if (this.turn_based_mode)
             return;
-        }
 
         this.set_state('paused');
     }
@@ -2592,6 +2585,8 @@ class OptionsOverlay extends DialogOverlay {
                 mk('label', mk('input', {name: 'sound-enabled', type: 'checkbox'}), " Enabled"),
                 mk('input', {name: 'sound-volume', type: 'range', min: 0, max: 1, step: 0.05}),
             ),
+            mk('dt'),
+            mk('dd', mk('label', mk('input', {name: 'use-cc2-anim-speed', type: 'checkbox'}), " Use CC2 animation speed")),
         );
         // Update volume live, if the player is active and was playing when this dialog was opened
         // (note that it won't auto-pause until open())
@@ -2700,6 +2695,7 @@ class OptionsOverlay extends DialogOverlay {
         this.root.elements['music-enabled'].checked = this.conductor.options.music_enabled ?? true;
         this.root.elements['sound-volume'].value = this.conductor.options.sound_volume ?? 1.0;
         this.root.elements['sound-enabled'].checked = this.conductor.options.sound_enabled ?? true;
+        this.root.elements['use-cc2-anim-speed'].checked = this.conductor.options.use_cc2_anim_speed ?? false;
 
         this.root.elements['custom-tileset'].addEventListener('change', ev => {
             this._load_custom_tileset(ev.target.files[0]);
@@ -2711,6 +2707,7 @@ class OptionsOverlay extends DialogOverlay {
             options.music_enabled = this.root.elements['music-enabled'].checked;
             options.sound_volume = parseFloat(this.root.elements['sound-volume'].value);
             options.sound_enabled = this.root.elements['sound-enabled'].checked;
+            options.use_cc2_anim_speed = this.root.elements['use-cc2-anim-speed'].checked;
 
             // Tileset stuff: slightly more complicated.  Save custom ones to localStorage as data
             // URIs, and /delete/ any custom ones we're not using any more, both of which require
@@ -2960,110 +2957,6 @@ class OptionsOverlay extends DialogOverlay {
         super.close();
     }
 }
-const COMPAT_RULESETS = [
-    ['lexy', "Lexy"],
-    ['steam', "Steam/CC2"],
-    ['steam-strict', "Steam/CC2 (strict)"],
-    ['lynx', "Lynx"],
-    ['ms', "Microsoft"],
-    ['custom', "Custom"],
-];
-// FIXME some of the names of the flags themselves kinda suck
-const COMPAT_FLAGS = [
-// Level loading
-{
-    key: 'no_auto_convert_ccl_popwalls',
-    label: "Recessed walls under actors in CCL levels are left alone",
-    rulesets: new Set(['steam-strict', 'lynx', 'ms']),
-}, {
-    key: 'no_auto_convert_ccl_blue_walls',
-    label: "Blue walls under blocks in CCL levels are left alone",
-    rulesets: new Set(['steam-strict', 'lynx']),
-},
-
-// Core
-{
-    key: 'use_lynx_loop',
-    label: "Game uses the Lynx-style update loop",
-    rulesets: new Set(['steam', 'steam-strict', 'lynx', 'ms']),
-}, {
-    key: 'emulate_60fps',
-    label: "Game runs at 60 FPS",
-    rulesets: new Set(['steam', 'steam-strict']),
-},
-
-// Tiles
-{
-    // XXX this is goofy
-    key: 'tiles_react_instantly',
-    label: "Tiles react when approached",
-    rulesets: new Set(['ms']),
-}, {
-    key: 'rff_actually_random',
-    label: "Random force floors are actually random",
-    rulesets: new Set(['ms']),
-},
-
-// Items
-{
-    key: 'no_immediate_detonate_bombs',
-    label: "Mines under non-player actors don't explode at level start",
-    rulesets: new Set(['lynx', 'ms']),
-}, {
-    key: 'detonate_bombs_under_players',
-    label: "Mines under players explode at level start",
-    rulesets: new Set(['steam', 'steam-strict']),
-}, {
-    key: 'monsters_ignore_keys',
-    label: "Monsters completely ignore keys",
-    rulesets: new Set(['ms']),
-},
-
-// Blocks
-{
-    key: 'no_early_push',
-    label: "Player pushes blocks at move time",
-    rulesets: new Set(['lynx', 'ms']),
-}, {
-    key: 'use_legacy_hooking',
-    label: "Pulling blocks with the hook happens at decision time",
-    rulesets: new Set(['steam', 'steam-strict']),
-}, {
-    // FIXME this is kind of annoying, there are some collision rules too
-    key: 'tanks_teeth_push_ice_blocks',
-    label: "Ice blocks emulate pgchip rules",
-    rulesets: new Set(['ms']),
-}, {
-    key: 'emulate_spring_mining',
-    label: "Spring mining is possible",
-    rulesets: new Set(['steam-strict']),
-/* XXX not implemented
-}, {
-    key: 'emulate_flicking',
-    label: "Flicking is possible",
-    rulesets: new Set(['ms']),
-*/
-},
-
-// Monsters
-{
-    // TODO? in lynx they ignore the button while in motion too
-    // TODO what about in a trap, in every game??
-    // TODO what does ms do when a tank is on ice or a ff?  wiki's description is wacky
-    // TODO yellow tanks seem to have memory too??
-    key: 'tanks_always_obey_button',
-    label: "Blue tanks always obey blue buttons",
-    rulesets: new Set(['steam-strict']),
-}, {
-    key: 'rff_blocks_monsters',
-    label: "Random force floors block monsters",
-    rulesets: new Set(['ms']),
-}, {
-    key: 'fire_allows_monsters',
-    label: "Fire doesn't block monsters",
-    rulesets: new Set(['ms']),
-},
-];
 class CompatOverlay extends DialogOverlay {
     constructor(conductor) {
         super(conductor);
@@ -3080,13 +2973,13 @@ class CompatOverlay extends DialogOverlay {
         );
 
         let button_set = mk('div.radio-faux-button-set');
-        for (let [ruleset, label] of COMPAT_RULESETS) {
+        for (let ruleset of COMPAT_RULESET_ORDER) {
             button_set.append(mk('label',
                 mk('input', {type: 'radio', name: '__ruleset__', value: ruleset}),
                 mk('span.-button',
                     mk('img.compat-icon', {src: `icons/compat-${ruleset}.png`}),
                     mk('br'),
-                    label,
+                    COMPAT_RULESET_LABELS[ruleset],
                 ),
             ));
         }
@@ -3107,7 +3000,7 @@ class CompatOverlay extends DialogOverlay {
                 mk('input', {type: 'checkbox', name: compat.key}),
                 mk('span.-desc', compat.label),
             );
-            for (let [ruleset, _] of COMPAT_RULESETS) {
+            for (let ruleset of COMPAT_RULESET_ORDER) {
                 if (ruleset === 'lexy' || ruleset === 'custom')
                     continue;
 
@@ -3230,12 +3123,12 @@ class PackTestDialog extends DialogOverlay {
         });
 
         let ruleset_dropdown = mk('select', {name: 'ruleset'});
-        for (let [ruleset, label] of COMPAT_RULESETS) {
+        for (let ruleset of COMPAT_RULESET_ORDER) {
             if (ruleset === 'custom') {
                 ruleset_dropdown.append(mk('option', {value: ruleset, selected: 'selected'}, "Current ruleset"));
             }
             else {
-                ruleset_dropdown.append(mk('option', {value: ruleset}, label));
+                ruleset_dropdown.append(mk('option', {value: ruleset}, COMPAT_RULESET_LABELS[ruleset]));
             }
         }
         this.main.append(
@@ -3269,12 +3162,7 @@ class PackTestDialog extends DialogOverlay {
             compat = this.conductor.compat;
         }
         else {
-            compat = {};
-            for (let compatdef of COMPAT_FLAGS) {
-                if (compatdef.rulesets.has(ruleset)) {
-                    compat[compatdef.key] = true;
-                }
-            }
+            compat = compat_flags_for_ruleset(ruleset);
         }
 
         for (let tbody of this.results.querySelectorAll('tbody')) {
@@ -3362,9 +3250,8 @@ class PackTestDialog extends DialogOverlay {
                 let replay = stored_level.replay;
                 level = new Level(stored_level, compat);
                 level.sfx = dummy_sfx;
-                level.force_floor_direction = replay.initial_force_floor_direction;
-                level._blob_modifier = replay.blob_seed;
                 level.undo_enabled = false; // slight performance boost
+                replay.configure_level(level);
 
                 while (true) {
                     let input = replay.get(level.tic_counter);
@@ -3658,11 +3545,7 @@ class Conductor {
         this._compat_ruleset = 'custom';  // Only used by the compat dialog
         if (typeof this.stash.compat === 'string') {
             this._compat_ruleset = this.stash.compat;
-            for (let compat of COMPAT_FLAGS) {
-                if (compat.rulesets.has(this.stash.compat)) {
-                    this.compat[compat.key] = true;
-                }
-            }
+            this.compat = compat_flags_for_ruleset(this.stash.compat);
         }
         else {
             Object.extend(this.compat, this.stash.compat);
@@ -3714,7 +3597,7 @@ class Conductor {
         document.querySelector('#main-compat').addEventListener('click', ev => {
             new CompatOverlay(this).open();
         });
-        document.querySelector('#main-compat output').textContent = this._compat_ruleset ?? 'Custom';
+        document.querySelector('#main-compat output').textContent = COMPAT_RULESET_LABELS[this._compat_ruleset ?? 'custom'];
 
         // Bind to the navigation headers, which list the current level pack
         // and level
@@ -3968,8 +3851,7 @@ class Conductor {
             this._compat_ruleset = ruleset;
         }
 
-        let label = COMPAT_RULESETS.filter(item => item[0] === ruleset)[0][1];
-        document.querySelector('#main-compat output').textContent = label;
+        document.querySelector('#main-compat output').textContent = COMPAT_RULESET_LABELS[ruleset];
 
         this.compat = flags;
     }

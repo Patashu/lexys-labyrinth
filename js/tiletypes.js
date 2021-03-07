@@ -146,9 +146,12 @@ function player_visual_state(me) {
     else if (me.exited) {
         return 'exited';
     }
-    else if (me.cell && (me.previous_cell || me.cell).has('water')) {
-        // CC2 shows a swimming pose while still in water, or moving away from water
-        // FIXME this also shows in some cases when we don't have flippers, e.g. when starting in water
+    // This is slightly complicated.  We should show a swimming pose while still in water, or moving
+    // away from water (as CC2 does), but NOT when stepping off a lilypad (which will already have
+    // been turned into water), and NOT without flippers (which can happen if we start on water)
+    else if (me.cell && (me.previous_cell || me.cell).has('water') &&
+        ! me.not_swimming && me.has_item('flippers'))
+    {
         return 'swimming';
     }
     else if (me.slide_mode === 'ice') {
@@ -191,7 +194,14 @@ function pursue_player(me, level) {
     let player = level.player;
     // CC2 behavior (not Lynx (TODO compat?)): pursue the player's apparent position, not just the
     // cell they're in
-    let [px, py] = player.visual_position();
+    let px, py;
+    if (level.compat.teeth_target_internal_position) {
+        px = player.cell.x;
+        py = player.cell.y;
+    }
+    else {
+        [px, py] = player.visual_position();
+    }
 
     let dx = me.cell.x - px;
     let dy = me.cell.y - py;
@@ -262,18 +272,30 @@ const TILE_TYPES = {
     floor_custom_green: {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.ghost,
+        blocks(me, level, other) {
+            return (other.type.name === 'sokoban_block' && other.color !== 'green');
+        },
     },
     floor_custom_pink: {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.ghost,
+        blocks(me, level, other) {
+            return (other.type.name === 'sokoban_block' && other.color !== 'red');
+        },
     },
     floor_custom_yellow: {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.ghost,
+        blocks(me, level, other) {
+            return (other.type.name === 'sokoban_block' && other.color !== 'yellow');
+        },
     },
     floor_custom_blue: {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.ghost,
+        blocks(me, level, other) {
+            return (other.type.name === 'sokoban_block' && other.color !== 'blue');
+        },
     },
     wall: {
         layer: LAYERS.terrain,
@@ -681,20 +703,29 @@ const TILE_TYPES = {
         blocks(me, level, other) {
             return !(!other.type.is_player || other.has_item('hiking_boots'));
         },
+        on_arrive(me, level, other) {
+            if (other.type.name === 'glass_block') {
+                // FIXME need a glass shatter vfx
+                level.kill_actor(other, 'explosion');
+            }
+        },
     },
     turntable_cw: {
         layer: LAYERS.terrain,
         wire_propagation_mode: 'all',
+        // Not actually a teleporter, but we use the same slide type
+        teleport_allow_override: true,
         on_begin(me, level) {
             update_wireable(me, level);
         },
         on_arrive(me, level, other) {
             if (! me.is_active)
                 return;
-            other.direction = DIRECTIONS[other.direction].right;
+            level.set_actor_direction(other, DIRECTIONS[other.direction].right);
             if (other.type.on_rotate) {
                 other.type.on_rotate(other, level, 'right');
             }
+            level.make_slide(other, 'teleport-forever');
         },
         on_power(me, level) {
             if (me.is_wired) {
@@ -713,16 +744,19 @@ const TILE_TYPES = {
     turntable_ccw: {
         layer: LAYERS.terrain,
         wire_propagation_mode: 'all',
+        // Not actually a teleporter, but we use the same slide type
+        teleport_allow_override: true,
         on_begin(me, level) {
             update_wireable(me, level);
         },
         on_arrive(me, level, other) {
             if (! me.is_active)
                 return;
-            other.direction = DIRECTIONS[other.direction].left;
+            level.set_actor_direction(other, DIRECTIONS[other.direction].left);
             if (other.type.on_rotate) {
                 other.type.on_rotate(other, level, 'left');
             }
+            level.make_slide(other, 'teleport-forever');
         },
         on_power(me, level) {
             if (me.is_wired) {
@@ -811,6 +845,15 @@ const TILE_TYPES = {
                 level.transmute_tile(other, 'splash');
                 level.recalculate_circuitry_next_wire_phase = true;
             }
+            else if (other.type.name === 'sokoban_block') {
+                level.transmute_tile(me, ({
+                    red: 'floor_custom_pink',
+                    blue: 'floor_custom_blue',
+                    yellow: 'floor_custom_yellow',
+                    green: 'floor_custom_green',
+                })[other.color]);
+                level.transmute_tile(other, 'splash');
+            }
             else if (other.type.is_real_player) {
                 level.fail('drowned', me, other);
             }
@@ -826,6 +869,9 @@ const TILE_TYPES = {
             level.transmute_tile(me, 'water');
             level.spawn_animation(me.cell, 'splash');
             level.sfx.play_once('splash', me.cell);
+            // Visual property, so the actor knows it's stepping off a lilypad, not swimming out of
+            // the water we just turned into
+            level._set_tile_prop(other, 'not_swimming', true);
         },
     },
     cracked_ice: {
@@ -1149,60 +1195,6 @@ const TILE_TYPES = {
         layer: LAYERS.item_mod,
         item_modifier: 'pickup',
     },
-    item_lock: {
-        layer: LAYERS.item_mod,
-        item_modifier: 'ignore',
-        blocks(me, level, other) {
-            let item = me.cell.get_item();
-            if (item === null) {
-                return false;
-            }
-            if (item.type.name == 'score_10') {
-                return !(other.type.is_real_player && level.bonus_points >= 10);
-            }
-            else if (item.type.name == 'score_100') {
-                return !(other.type.is_real_player && level.bonus_points >= 100);
-            }
-            else if (item.type.name == 'score_1000') {
-                return !(other.type.is_real_player && level.bonus_points >= 1000);
-            }
-            else if (item.type.name == 'score_2x') {
-                return !(other.type.is_real_player && level.bonus_points >= 1);
-            }
-            else if (item.type.name == 'score_5x') {
-                return !(other.type.is_real_player && level.bonus_points >= 1);
-            }
-            return !other.has_item(item.type.name);
-        },
-        on_arrive(me, level, other) {
-            let item = me.cell.get_item();
-            if (item === null) {
-                return;
-            }
-            if (item.type.name == 'score_10') {
-                level.adjust_bonus(-10);
-            }
-            else if (item.type.name == 'score_100') {
-                level.adjust_bonus(-100);
-            }
-            else if (item.type.name == 'score_1000') {
-                level.adjust_bonus(-1000);
-            }
-            else if (item.type.name == 'score_2x') {
-                level.adjust_bonus(0, 1/2);
-            }
-            else if (item.type.name == 'score_5x') {
-                level.adjust_bonus(0, 1/5);
-            }
-            else {
-                level.take_key_from_actor(other, item.type.name, true) || level.take_tool_from_actor(other, item.type.name);
-            }
-            level.sfx.play_once('door', me.cell);
-            level.spawn_animation(me.cell, 'puff');
-            level.remove_tile(me);
-            level.remove_tile(item);
-        },
-    },
 
     // Mechanisms
     dirt_block: {
@@ -1230,6 +1222,8 @@ const TILE_TYPES = {
             ice_block: true,
             frame_block: true,
             boulder: true,
+            glass_block: true,
+            sokoban_block: true,
         },
         on_after_bumped(me, level, other) {
             // Fireballs melt ice blocks on regular floor FIXME and water!
@@ -1263,6 +1257,7 @@ const TILE_TYPES = {
             frame_block: true,
             boulder: true,
             glass_block: true,
+            sokoban_block: true,
         },
         on_clone(me, original) {
             me.arrows = new Set(original.arrows);
@@ -1433,11 +1428,101 @@ const TILE_TYPES = {
         },
     },
 
+    // Sokoban blocks, buttons, and walls -- they each come in four colors, the buttons can be
+    // pressed by anything EXCEPT a sokoban block of the WRONG color, and the walls become floors
+    // only when ALL the buttons of the corresponding color are pressed
+    sokoban_block: {
+        layer: LAYERS.actor,
+        collision_mask: COLLISION.block_cc1,
+        blocks_collision: COLLISION.all,
+        item_pickup_priority: PICKUP_PRIORITIES.always,
+        is_actor: true,
+        is_block: true,
+        can_reverse_on_railroad: true,
+        movement_speed: 4,
+        populate_defaults(me) {
+            me.color = 'red';
+        },
+        visual_state(me) {
+            return me.color ?? 'red';
+        },
+    },
+    sokoban_button: {
+        layer: LAYERS.terrain,
+        populate_defaults(me) {
+            me.color = 'red';
+        },
+        on_arrive(me, level, other) {
+            if (other.type.name === 'sokoban_block' && me.color !== other.color)
+                return;
+            level.sfx.play_once('button-press', me.cell);
+
+            level.sokoban_buttons_unpressed[me.color] -= 1;
+            level._push_pending_undo(() => {
+                level.sokoban_buttons_unpressed[me.color] += 1;
+            });
+            if (level.sokoban_buttons_unpressed[me.color] === 0) {
+                for (let cell of level.linear_cells) {
+                    let terrain = cell.get_terrain();
+                    if (terrain.type.name === 'sokoban_wall' && terrain.color === me.color) {
+                        level.transmute_tile(terrain, 'sokoban_floor');
+                    }
+                }
+            }
+        },
+        on_depart(me, level, other) {
+            if (other.type.name === 'sokoban_block' && me.color !== other.color)
+                return;
+            level.sfx.play_once('button-release', me.cell);
+
+            level.sokoban_buttons_unpressed[me.color] += 1;
+            level._push_pending_undo(() => {
+                level.sokoban_buttons_unpressed[me.color] -= 1;
+            });
+            if (level.sokoban_buttons_unpressed[me.color] === 1) {
+                for (let cell of level.linear_cells) {
+                    let terrain = cell.get_terrain();
+                    if (terrain.type.name === 'sokoban_floor' && terrain.color === me.color) {
+                        level.transmute_tile(terrain, 'sokoban_wall');
+                    }
+                }
+            }
+        },
+        visual_state(me) {
+            return (me.color ?? 'red') + '_' + button_visual_state(me);
+        },
+    },
+    sokoban_wall: {
+        layer: LAYERS.terrain,
+        blocks_collision: COLLISION.all_but_ghost,
+        populate_defaults(me) {
+            me.color = 'red';
+        },
+        visual_state(me) {
+            return me.color ?? 'red';
+        },
+    },
+    sokoban_floor: {
+        layer: LAYERS.terrain,
+        populate_defaults(me) {
+            me.color = 'red';
+        },
+        visual_state(me) {
+            return me.color ?? 'red';
+        },
+    },
+
     // ------------------------------------------------------------------------------------------------
     // Floor mechanisms
     cloner: {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.real_player | COLLISION.block_cc1 | COLLISION.monster_solid,
+        populate_defaults(me) {
+            me.arrows = 0;  // bitmask of glowing arrows (visual, no gameplay impact)
+        },
+        on_ready(me, level) {
+            me.arrows = me.arrows ?? 0;
+        },
         traps(me, actor) {
             return ! actor._clone_release;
         },
@@ -1495,11 +1580,17 @@ const TILE_TYPES = {
                 level._set_tile_prop(me, 'presses', 0);
             }
         },
+        on_arrive(me, level, other) {
+            // Lynx (not cc2): open traps immediately eject their contents on arrival, if possible,
+            // and also do it slightly faster
+            if (level.compat.traps_like_lynx) {
+                level.attempt_out_of_turn_step(other, other.direction, 3);
+            }
+        },
         add_press_ready(me, level, other) {
             // Same as below, but without ejection
             level._set_tile_prop(me, 'presses', (me.presses ?? 0) + 1);
         },
-        // Lynx (not cc2): open traps immediately eject their contents on arrival, if possible
         add_press(me, level, is_wire = false) {
             level._set_tile_prop(me, 'presses', me.presses + 1);
             // TODO weird cc2 case that may or may not be a bug: actors aren't ejected if the trap
@@ -1510,7 +1601,9 @@ const TILE_TYPES = {
                 if (actor) {
                     // Forcibly move anything released from a trap, which keeps it in sync with
                     // whatever pushed the button
-                    level.attempt_out_of_turn_step(actor, actor.direction);
+                    level.attempt_out_of_turn_step(
+                        actor, actor.direction,
+                        level.compat.traps_like_lynx ? 3 : 0);
                 }
             }
         },
@@ -1566,6 +1659,31 @@ const TILE_TYPES = {
 
             teeth: 'teeth_timid',
             teeth_timid: 'teeth',
+
+            // Items are only mogrified when inside a glass block
+            key_red: 'key_blue',
+            key_blue: 'key_red',
+            key_yellow: 'key_green',
+            key_green: 'key_yellow',
+
+            flippers: 'fire_boots',
+            fire_boots: 'flippers',
+            cleats: 'suction_boots',
+            suction_boots: 'cleats',
+            hiking_boots: 'speed_boots',
+            speed_boots: 'hiking_boots',
+            lightning_bolt: 'railroad_sign',
+            railroad_sign: 'lightning_bolt',
+            helmet: 'xray_eye',
+            xray_eye: 'helmet',
+            hook: 'foil',
+            foil: 'hook',
+            bowling_ball: 'dynamite',
+            dynamite: 'bowling_ball',
+            bribe: 'skeleton_key',
+            skeleton_key: 'bribe',
+            stopwatch_bonus: 'stopwatch_penalty',
+            stopwatch_penalty: 'stopwatch_bonus',
         },
         _blob_mogrifications: ['glider', 'paramecium', 'fireball', 'bug', 'walker', 'ball', 'teeth', 'tank_blue', 'teeth_timid'],
         on_begin(me, level) {
@@ -1585,6 +1703,23 @@ const TILE_TYPES = {
             else if (name === 'blob') {
                 let options = me.type._blob_mogrifications;
                 level.transmute_tile(other, options[level.prng() % options.length]);
+            }
+            else if (name === 'glass_block' && other.encased_item) {
+                let new_item = me.type._mogrifications[other.encased_item];
+                if (new_item) {
+                    level._set_tile_prop(other, 'encased_item', new_item);
+                }
+                else {
+                    return;
+                }
+            }
+            else if (name === 'sokoban_block') {
+                level._set_tile_prop(other, 'color', ({
+                    red: 'blue',
+                    blue: 'red',
+                    yellow: 'green',
+                    green: 'yellow',
+                })[other.color]);
             }
             else {
                 return;
@@ -2381,6 +2516,7 @@ const TILE_TYPES = {
             circuit_block: true,
             boulder: true,
             glass_block: true,
+            sokoban_block: true,
         },
         decide_movement(me, level) {
             if (me.pending_decision) {
@@ -2399,8 +2535,15 @@ const TILE_TYPES = {
         movement_speed: 8,
         decide_movement(me, level) {
             // move completely at random
-            let modifier = level.get_blob_modifier();
-            return [DIRECTION_ORDER[(level.prng() + modifier) % 4]];
+            let d;
+            if (level.compat.blobs_use_tw_prng) {
+                d = level.tw_prng_random4();
+            }
+            else {
+                let modifier = level.get_blob_modifier();
+                d = (level.prng() + modifier) % 4;
+            }
+            return [DIRECTION_ORDER[d]];
         },
     },
     teeth: {
@@ -2497,6 +2640,7 @@ const TILE_TYPES = {
             circuit_block: true,
             boulder: true,
             glass_block: true,
+            sokoban_block: true,
         },
         on_ready(me, level) {
             me.current_emulatee = 0;
@@ -2910,6 +3054,7 @@ const TILE_TYPES = {
             circuit_block: true,
             boulder: true,
             glass_block: true,
+            sokoban_block: true,
         },
         infinite_items: {
             key_green: true,
@@ -2934,6 +3079,7 @@ const TILE_TYPES = {
             circuit_block: true,
             boulder: true,
             glass_block: true,
+            sokoban_block: true,
         },
         infinite_items: {
             key_yellow: true,
@@ -2957,6 +3103,7 @@ const TILE_TYPES = {
             circuit_block: true,
             boulder: true,
             glass_block: true,
+            sokoban_block: true,
         },
         infinite_items: {
             key_green: true,
@@ -2984,6 +3131,7 @@ const TILE_TYPES = {
             circuit_block: true,
             boulder: true,
             glass_block: true,
+            sokoban_block: true,
         },
         infinite_items: {
             key_yellow: true,
