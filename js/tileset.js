@@ -1514,10 +1514,14 @@ export const LL_TILESET_LAYOUT = {
         west: [29, 11],
     },
     shark: {
+        __special__: 'visual-state',
+        normal: {
         north: [30, 8],
         east: [30, 9],
         south: [30, 10],
         west: [30, 11],
+        },
+        killer: [31, 10],
     },
 
     blob: {

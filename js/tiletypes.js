@@ -2528,10 +2528,11 @@ const TILE_TYPES = {
     },
     shark: {
         ...COMMON_MONSTER,
-        //basically phases through everything
+        //phases through everything by default, then defines its own exceptions
         collision_mask: 0x0000,
         on_ready(me, level) {
-            //TODO: do we want to be able to have swivels, gates and canopies as homes? if so, how do we decide if the overlay or the base terrain is the shark's home?
+            level._set_tile_prop(me, 'visual_state', 'normal');
+            //for now, you can't define item-sharks, swivel-sharks, canopy-sharks, etc. but imagine if you COULD
             level._set_tile_prop(me, 'home', me.cell.get_terrain().type.name);
         },
         on_clone(me, original) {
@@ -2553,17 +2554,45 @@ const TILE_TYPES = {
             || t1 === 'cloner' || t2 === 'cloner';
         },
         blocked_by(me, level, other) {
-            //if the tile has an actor in it: it blocks us UNLESS the actor is a player.
-            if (other.cell.get_actor() !== null) {
-                return other.cell.get_actor() !== level.player;
-            }
-            //otherwise, we can swim to any tile that's our terrain. nothing else in it can block us.
-            if (this.terrains_are_same_set(other.cell.get_terrain().type.name, me.home)) {
+            //ignore everything that's not terrain - we'll do our check when we find the terrain on the whole cell
+            if (other.type.layer !== LAYERS.terrain) {
                 return false;
             }
-            return true;
+            //Tiles with players on them don't block if their tile is our home OR a normal monster could enter it.
+            //Tiles without players don't block if their tile is our home.
+            //Tiles with actors (who aren't the player) block us (I think the reason why we need to define this back in is because we phase too well?)
+            let has_player = false;
+            if (other.cell.get_actor() !== null) {
+                has_player = other.cell.get_actor() === level.player;
+                if (!has_player) {
+                    return true;
+                }
+            }
+            let result = true;
+            if (this.terrains_are_same_set(other.type.name, me.home)) {
+                result = false;
+            }
+            if (result && has_player && !(other.type.blocks_collision & COLLISION.monster_general)) {
+                //probe tile to see if it'd accept a generic monster (covers fire and rff edge cases)
+                if (other.type.blocks) {
+                    let dummy = { type: TILE_TYPES['ball'] };
+                    if (!other.type.blocks(other, level, dummy)) {
+                        result = false;
+                    }
+                }
+                else
+                {
+                    result = false;
+                }
+            }
+            if (has_player && !result) {
+                level._set_tile_prop(me, 'visual_state', 'killer');
+            }
+            return result;
         },
         decide_movement(me, level) {
+            //change to normal animation at the start of a move
+            level._set_tile_prop(me, 'visual_state', 'normal');
             // can we smell blood?
             if (Math.abs(level.player.cell.x - me.cell.x) < 3 && Math.abs(level.player.cell.y - me.cell.y) < 3) {
                 return pursue_player(me, level);
@@ -2572,6 +2601,9 @@ const TILE_TYPES = {
             // always try turning as left as possible, and fall back to less-left turns
             let d = DIRECTIONS[me.direction];
             return [d.left, me.direction, d.right, d.opposite];
+        },
+        visual_state(me) {
+            return (me && me.visual_state) ?? 'normal';
         },
     },
 
