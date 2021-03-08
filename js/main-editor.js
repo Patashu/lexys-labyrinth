@@ -1,4 +1,4 @@
-import * as fflate from './vendor/fflate.mjs';
+import * as fflate from './vendor/fflate.js';
 
 import { DIRECTIONS, LAYERS, TICS_PER_SECOND } from './defs.js';
 import { TILES_WITH_PROPS } from './editor-tile-overlays.js';
@@ -2521,6 +2521,21 @@ const SPECIAL_PALETTE_BEHAVIOR = {
     circuit_block: {
         pick_palette_entry(tile) {
             return 'circuit_block/xxx';
+        },
+    },
+    sokoban_block: {
+        pick_palette_entry(tile) {
+            return 'sokoban_block/' + (tile.color ?? 'red');
+        },
+    },
+    sokoban_button: {
+        pick_palette_entry(tile) {
+            return 'sokoban_button/' + (tile.color ?? 'red');
+        },
+    },
+    sokoban_wall: {
+        pick_palette_entry(tile) {
+            return 'sokoban_wall/' + (tile.color ?? 'red');
         },
     },
 };
