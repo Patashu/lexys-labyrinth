@@ -2753,7 +2753,7 @@ const TILE_TYPES = {
             if (has_player && !result) {
                 level._set_tile_prop(me, 'visual_state', 'killer');
             }
-            if (result && me.mood === 'fireball') {
+            if (result && me.mood === 'lance') {
                 level._set_tile_prop(me, 'mood', 'bug');
             }
             return result;
@@ -2769,13 +2769,14 @@ const TILE_TYPES = {
             else {
                 if (me.mood === 'teeth')
                 {
-                    level._set_tile_prop(me, 'mood', 'fireball');
+                    level._set_tile_prop(me, 'mood', 'lance');
                 }
             }
-            //otherwise, bug or fireball (fireball lasts until we get blocked once)
-            if (me.mood === 'fireball') {
+            //otherwise, bug or lance (lance lasts until we get blocked once)
+			//(lance is a movement type that doesn't exist in base CC2: forward else right else back else left)
+            if (me.mood === 'lance') {
                 let d = DIRECTIONS[me.direction];
-                return [me.direction, d.right, d.left, d.opposite];
+                return [me.direction, d.right, d.opposite, d.left];
             }
             else {
                 let d = DIRECTIONS[me.direction];
