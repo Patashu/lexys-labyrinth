@@ -2696,7 +2696,7 @@ const TILE_TYPES = {
             }
             
             //for hiking boots check
-            let hikeables = new Set(['dirt', 'gravel', 'spikes']);
+            let hikeables = new Set(['dirt', 'gravel', 'spikes', 'sand']);
             
             if (shark.has_item('fire_boots') && t2 === 'fire') {
                 return true;
@@ -2773,7 +2773,7 @@ const TILE_TYPES = {
                 }
             }
             //otherwise, bug or lance (lance lasts until we get blocked once)
-			//(lance is a movement type that doesn't exist in base CC2: forward else right else back else left)
+            //(lance is a movement type that doesn't exist in base CC2: forward else right else back else left)
             if (me.mood === 'lance') {
                 let d = DIRECTIONS[me.direction];
                 return [me.direction, d.right, d.opposite, d.left];

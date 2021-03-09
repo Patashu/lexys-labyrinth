@@ -2210,7 +2210,7 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     sand: {
         name: "Sand",
-        desc: "Anything walking on it moves at half speed.  Stops all blocks.",
+        desc: "Anything walking on it without hiking boots moves at half speed.  Stops all blocks.",
     },
     ankh: {
         name: "Ankh",
