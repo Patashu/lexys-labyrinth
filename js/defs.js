@@ -179,6 +179,10 @@ export const COMPAT_FLAGS = [
     key: 'traps_like_lynx',
     label: "Traps eject faster, and even when already open",
     rulesets: new Set(['lynx']),
+}, {
+    key: 'blue_floors_vanish_on_arrive',
+    label: "Fake blue walls vanish on arrival",
+    rulesets: new Set(['lynx']),
 },
 
 // Items
@@ -190,6 +194,10 @@ export const COMPAT_FLAGS = [
     key: 'detonate_bombs_under_players',
     label: "Mines under players explode at level start",
     rulesets: new Set(['steam', 'steam-strict']),
+}, {
+    key: 'cloned_bowling_balls_can_be_lost',
+    label: "Bowling balls on cloners are destroyed when fired at point blank",
+    rulesets: new Set(['steam-strict']),
 }, {
     key: 'monsters_ignore_keys',
     label: "Monsters completely ignore keys",
@@ -214,6 +222,10 @@ export const COMPAT_FLAGS = [
     key: 'tanks_teeth_push_ice_blocks',
     label: "Ice blocks emulate pgchip rules",
     rulesets: new Set(['ms']),
+}, {
+    key: 'allow_pushing_blocks_off_faux_walls',
+    label: "Blocks may be pushed off of blue (fake), invisible, and revealing walls",
+    rulesets: new Set(['lynx']),
 }, {
     key: 'emulate_spring_mining',
     label: "Spring mining is possible",

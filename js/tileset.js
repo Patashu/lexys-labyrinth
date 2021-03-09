@@ -151,6 +151,7 @@ export const CC2_TILESET_LAYOUT = {
     wall_custom_blue: [15, 4],
 
     explosion: [[0, 5], [1, 5], [2, 5], [3, 5]],
+    explosion_nb: [[0, 5], [1, 5], [2, 5], [3, 5]],
     splash_slime: [[0, 5], [1, 5], [2, 5], [3, 5]],
     splash: [[4, 5], [5, 5], [6, 5], [7, 5]],
     flame_jet_off: [8, 5],
@@ -475,28 +476,28 @@ export const CC2_TILESET_LAYOUT = {
 
     force_floor_n: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [0, 19],
         scroll_region: [0, 1],
     },
     force_floor_e: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [3, 19],
         scroll_region: [-1, 0],
     },
     force_floor_s: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [1, 20],
         scroll_region: [0, -1],
     },
     force_floor_w: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [2, 20],
         scroll_region: [1, 0],
@@ -544,7 +545,7 @@ export const CC2_TILESET_LAYOUT = {
 
     force_floor_all: {
         __special__: 'animated',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         all: [[0, 21], [1, 21], [2, 21], [3, 21], [4, 21], [5, 21], [6, 21], [7, 21]],
     },
@@ -900,6 +901,7 @@ export const TILE_WORLD_TILESET_LAYOUT = {
     bogus_player_burned_fire: [3, 4],
     bogus_player_burned: [3, 5],
     explosion: [3, 6],
+    explosion_nb: [3, 6],
     explosion_other: [3, 7],  // TODO ???
     // 3, 8 unused
     bogus_player_win: [3, 9],  // TODO 10 and 11 too?  does this animate?
@@ -1143,28 +1145,28 @@ export const LL_TILESET_LAYOUT = {
 
     force_floor_n: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [0, 8],
         scroll_region: [0, 1],
     },
     force_floor_e: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [3, 8],
         scroll_region: [-1, 0],
     },
     force_floor_s: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [1, 9],
         scroll_region: [0, -1],
     },
     force_floor_w: {
         __special__: 'scroll',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         base: [2, 9],
         scroll_region: [1, 0],
@@ -1183,7 +1185,7 @@ export const LL_TILESET_LAYOUT = {
     },
     force_floor_all: {
         __special__: 'animated',
-        duration: 20,
+        duration: 24,
         cc2_duration: 8,
         all: [[0, 10], [1, 10], [2, 10], [3, 10], [4, 10], [5, 10], [6, 10], [7, 10]],
     },
@@ -1293,7 +1295,8 @@ export const LL_TILESET_LAYOUT = {
     xray_eye: [3, 17],
     helmet: [4, 17],
     skeleton_key: [0, 18],
-    halo: [1, 18],
+    ankh: [1, 18],
+    floor_ankh: [2, 18],
     no_sign: [6, 18],
     gift_bow: [7, 18],
     score_10: [0, 19],
@@ -1307,7 +1310,7 @@ export const LL_TILESET_LAYOUT = {
 
     chip: {
         __special__: 'animated',
-        duration: 20,
+        duration: 24,
         all: [[8, 16], [9, 16], [10, 16], [9, 16]],
     },
     chip_extra: {
@@ -1315,14 +1318,14 @@ export const LL_TILESET_LAYOUT = {
         modes: new Set(['palette', 'editor']),
         hidden: {
             __special__: 'animated',
-            duration: 20,
+            duration: 24,
             all: [[8, 16], [9, 16], [10, 16], [9, 16]],
         },
         revealed: [8, 19],
     },
     green_chip: {
         __special__: 'animated',
-        duration: 20,
+        duration: 24,
         all: [[8, 17], [9, 17], [10, 17], [9, 17]],
     },
     bowling_ball: [9, 19],
@@ -1418,7 +1421,7 @@ export const LL_TILESET_LAYOUT = {
             __special__: 'animated',
             duration: 12,
             cc2_duration: 16,
-            all: [[8, 21], [9, 21], [10, 21], [11, 21]],
+            all: [[8, 22], [9, 22], [10, 22], [11, 22]],
         }
     },
     turntable_ccw: {
@@ -1428,7 +1431,7 @@ export const LL_TILESET_LAYOUT = {
             __special__: 'animated',
             duration: 12,
             cc2_duration: 16,
-            all: [[8, 22], [9, 22], [10, 22], [11, 22]],
+            all: [[8, 21], [9, 21], [10, 21], [11, 21]],
         }
     },
     flame_jet_off: [12, 21],
@@ -1980,6 +1983,7 @@ export const LL_TILESET_LAYOUT = {
 
     // VFX
     explosion: [[16, 26], [17, 26], [18, 26], [19, 26]],
+    explosion_nb: [[16, 26], [17, 26], [18, 26], [19, 26]],
     splash: [[16, 27], [17, 27], [18, 27], [19, 27]],
     splash_slime: [[16, 28], [17, 28], [18, 28], [19, 28]],
     fall: [[16, 29], [17, 29], [18, 29], [19, 29]],
@@ -1988,6 +1992,7 @@ export const LL_TILESET_LAYOUT = {
     transmogrify_flash: [[24, 26], [25, 26], [26, 26], [27, 26], [28, 26], [29, 26], [30, 26], [31, 26]],
     teleport_flash: [[24, 27], [25, 27], [26, 27], [27, 27]],
     puff: [[24, 28], [25, 28], [26, 28], [27, 28]],
+    resurrection: [[23, 28], [22, 28], [21, 28], [20, 28]],
 };
 
 export const TILESET_LAYOUTS = {
@@ -1999,17 +2004,15 @@ export const TILESET_LAYOUTS = {
 
 // Bundle of arguments for drawing a tile, containing some standard state about the game
 export class DrawPacket {
-    constructor(tic = 0, perception = 'normal') {
-        this.tic = tic;
+    constructor(perception = 'normal', hide_logic = false, clock = 0, update_progress = 0, update_rate = 3) {
         this.perception = perception;
+        this.hide_logic = hide_logic && perception === 'normal';
         this.use_cc2_anim_speed = false;
+        this.clock = clock;
+        this.update_progress = update_progress;
+        this.update_rate = update_rate;
         // this.x
         // this.y
-
-        // Distinguishes between interpolation of 20tps and 60fps; 3 means 20tps, 1 means 60fps
-        // XXX this isn't actually about update /rate/; it's about how many "frames" of cooldown
-        // pass between a decision and the end of a tic
-        this.update_rate = 3;
     }
 
     // Draw a tile (or region) from the tileset.  The caller is presumed to know where the tile
@@ -2065,12 +2068,7 @@ export class Tileset {
         // explosion or splash) and just plays over the course of its lifetime
         if (coords[0] instanceof Array) {
             if (tile && tile.movement_speed) {
-                let p = tile.movement_progress(packet.tic % 1, packet.update_rate);
-                // FIXME still get p > 1 in steam-strict
-                if (p >= 1) {
-                    //console.warn(name, "p =", p, "tic =", packet.tic, "duration =", duration);
-                    p = 0.999;
-                }
+                let p = tile.movement_progress(packet.update_progress, packet.update_rate);
                 coords = coords[Math.floor(p * coords.length)];
             }
             else  {
@@ -2093,7 +2091,7 @@ export class Tileset {
             frames = drawspec.south;
         }
         // Shortcut: when drawing statically, skip all of this
-        if (! tile || packet.tic === 0) {
+        if (! tile || packet.update_progress === 0) {
             packet.blit(...frames[drawspec.idle_frame_index ?? 0]);
             return;
         }
@@ -2107,7 +2105,7 @@ export class Tileset {
         let n;
         if (is_global) {
             // This tile animates on a global timer, looping every 'duration' frames
-            let p = packet.tic * 3 / duration;
+            let p = packet.clock * 3 / duration;
             // Lilypads bob at pseudo-random.  CC2 has a much simpler approach to this, but it looks
             // kind of bad with big patches of lilypads.  It's 202x so let's use that CPU baby
             if (drawspec.positionally_hashed) {
@@ -2121,7 +2119,7 @@ export class Tileset {
         }
         else if (tile && tile.movement_speed) {
             // This tile is in motion and its animation runs 'duration' times each move.
-            let p = tile.movement_progress(packet.tic % 1, packet.update_rate);
+            let p = tile.movement_progress(packet.update_progress, packet.update_rate);
             duration = duration ?? 1;
             if (duration < 1) {
                 // The 'duration' may be fractional; for example, the player's walk cycle is two
@@ -2131,19 +2129,16 @@ export class Tileset {
                 // Thus we add an integer in [0, 2) to offset us into which half to play, then
                 // divide by 2 to renormalize.  Which half to use is determined by when the
                 // animation /started/, as measured in animation lengths.
-                let start_time = (packet.tic * 3 / tile.movement_speed) - p;
+                let start_time = (packet.clock * 3 / tile.movement_speed) - p;
                 // Rounding smooths out float error (assuming the framerate never exceeds 1000)
-                let segment = Math.floor(Math.round(start_time * 1000) / 1000 % (1 / duration));
+                let chunk_size = 1 / duration;
+                let segment = Math.floor(Math.round(start_time * 1000) / 1000 % chunk_size);
                 p = (p + segment) * duration;
             }
             else if (duration > 1) {
                 // Larger durations are much easier; just multiply and mod.
                 // (Note that large fractional durations like 2.5 will not work.)
                 p = p * duration % 1;
-            }
-            if (p >= 1) {
-                //console.warn(name, "p =", p, "tic =", packet.tic, "duration =", duration);
-                p = 0.999;
             }
             n = Math.floor(p * frames.length);
         }
@@ -2180,8 +2175,8 @@ export class Tileset {
         if (packet.use_cc2_anim_speed && drawspec.cc2_duration) {
             duration = drawspec.cc2_duration;
         }
-        x += drawspec.scroll_region[0] * (packet.tic * 3 / duration % 1);
-        y += drawspec.scroll_region[1] * (packet.tic * 3 / duration % 1);
+        x += drawspec.scroll_region[0] * (packet.clock * 3 / duration % 1);
+        y += drawspec.scroll_region[1] * (packet.clock * 3 / duration % 1);
         // Round to pixels
         x = Math.floor(x * this.size_x + 0.5) / this.size_x;
         y = Math.floor(y * this.size_y + 0.5) / this.size_y;
@@ -2193,7 +2188,7 @@ export class Tileset {
         let wire_radius = this.layout['#wire-width'] / 2;
         // TODO circuit block with a lightning bolt is always powered
         // TODO circuit block in motion doesn't inherit cell's power
-        if (tile && tile.wire_directions) {
+        if (tile && tile.wire_directions && ! packet.hide_logic) {
             // Draw the base tile
             packet.blit(drawspec.base[0], drawspec.base[1]);
 
@@ -2226,9 +2221,8 @@ export class Tileset {
             }
         }
 
-
         // Wired tiles may also have tunnels, drawn on top of everything else
-        if (tile && tile.wire_tunnel_directions) {
+        if (tile && tile.wire_tunnel_directions && ! packet.hide_logic) {
             let tunnel_coords = this.layout['#wire-tunnel'];
             let tunnel_width = 6/32;
             let tunnel_length = 12/32;
@@ -2363,7 +2357,7 @@ export class Tileset {
         // It might be random!  I'm gonna say it loops every 0.3 seconds = 18 frames, so 4.5 frames
         // per cel, I guess.  No one will know.  (But...  I'll know.)
         // Also it's drawn in the upper right, that's important.
-        let cel = Math.floor(packet.tic / 0.3 * 4) % 4;
+        let cel = Math.floor(packet.clock / 0.3 * 4) % 4;
         packet.blit(...drawspec.fuse, 0.5 * (cel % 2), 0.5 * Math.floor(cel / 2), 0.5, 0.5, 0.5, 0);
     }
 
@@ -2406,7 +2400,6 @@ export class Tileset {
     }
 
     _draw_double_size_monster(drawspec, name, tile, packet) {
-        // FIXME at 60fps, the first step draws slightly offset, looks funky
         // CC2's tileset has double-size art for blobs and walkers that spans the tile they're
         // moving from AND the tile they're moving into.
         // First, of course, this only happens if they're moving at all.
@@ -2418,33 +2411,36 @@ export class Tileset {
         // They only support horizontal and vertical moves, not all four directions.  The other two
         // directions are simply the animations played in reverse.
         let axis_cels;
-        let w = 1, h = 1, x = 0, y = 0, reverse = false;
+        let w = 1, h = 1, x = 0, y = 0, sx = 0, sy = 0, reverse = false;
         if (tile.direction === 'north') {
             axis_cels = drawspec.vertical;
             reverse = true;
             h = 2;
+            sy = 1;
         }
         else if (tile.direction === 'south') {
             axis_cels = drawspec.vertical;
             h = 2;
             y = -1;
+            sy = -1;
         }
         else if (tile.direction === 'west') {
             axis_cels = drawspec.horizontal;
             reverse = true;
             w = 2;
+            sx = 1;
         }
         else if (tile.direction === 'east') {
             axis_cels = drawspec.horizontal;
             w = 2;
             x = -1;
+            sx = -1;
         }
 
-        let p = tile.movement_progress(packet.tic % 1, packet.update_rate);
-        p = Math.min(p, 0.999);  // FIXME hack for differing movement counters
+        let p = tile.movement_progress(packet.update_progress, packet.update_rate);
         let index = Math.floor(p * (axis_cels.length + 1));
         if (index === 0 || index > axis_cels.length) {
-            this.draw_drawspec(drawspec.base, name, tile, packet);
+            packet.blit_aligned(...drawspec.base, 0, 0, 1, 1, sx, sy);
         }
         else {
             let cel = reverse ? axis_cels[axis_cels.length - index] : axis_cels[index - 1];
@@ -2616,7 +2612,12 @@ export class Tileset {
                 }
             }
             else if (drawspec.__special__ === 'logic-gate') {
-                this._draw_logic_gate(drawspec, name, tile, packet);
+                if (packet.hide_logic) {
+                    this.draw_type('floor', tile, packet);
+                }
+                else {
+                    this._draw_logic_gate(drawspec, name, tile, packet);
+                }
             }
             else if (drawspec.__special__ === 'railroad') {
                 this._draw_railroad(drawspec, name, tile, packet);
