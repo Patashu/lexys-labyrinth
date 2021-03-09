@@ -1939,6 +1939,7 @@ const TILE_TYPES = {
         layer: LAYERS.terrain,
         wire_propagation_mode: 'all',
         on_begin(me, level) {
+            level._set_tile_prop(me, 'is_active', false);
             level._set_tile_prop(me, 'wire_directions', 15);
             level.recalculate_circuitry_next_wire_phase = true;
         },
@@ -2627,30 +2628,93 @@ const TILE_TYPES = {
     },
     shark: {
         ...COMMON_MONSTER,
+        //speeds up while pursuing (game.js attempt_step)
+        movement_speed: 8,
         //phases through everything by default, then defines its own exceptions
         collision_mask: 0x0000,
+        ignores: new Set([
+            //permanent transformations
+            'wall_invisible', 'wall_appearing',
+            'fake_floor', 'fake_wall',
+            'door_blue', 'door_red', 'door_yellow', 'door_green',
+            'socket',
+            'popwall',
+            'dirt',
+            
+            //damaging/forcing terrain (and 3 more permanent transformations)
+            'slime',
+            'water', 'turtle',
+            'fire',
+            'ice', 'ice_nw', 'ice_ne', 'ice_sw', 'ice_se', 'cracked_ice',
+            'force_floor_n', 'force_floor_s', 'force_floor_e', 'force_floor_w','force_floor_all',
+            'hole', 'cracked_floor',
+            //deliberate exceptions: flame_jet_on, electrified_floor, 4 teleports, 2 turntables
+            
+            //speed terrain (this is the most arbitrary category, I think, but I like sand sharks being difficult to outrun and dash sharks being easy to outrun and it feels similar to them not sliding on ice or force floors)
+            'sand', 'dash_floor',
+        ]),
         on_ready(me, level) {
             level._set_tile_prop(me, 'visual_state', 'normal');
-            //for now, you can't define item-sharks, swivel-sharks, canopy-sharks, etc. but imagine if you COULD
-            level._set_tile_prop(me, 'home', me.cell.get_terrain().type.name);
+            level._set_tile_prop(me, 'mood', 'bug');
         },
         on_clone(me, original) {
-            //actually takes on the properties of the tile it gets cloned onto
-            original.home = original.cell.get_terrain().type.name;
-            me.home = 'cloner';
+            me.visual_state = 'normal';
+            me.mood = 'bug';
         },
-        terrains_are_same_set(t1, t2) {
-            //also considering if (turntables, flame jet on/off, power switch on/off, both blue walls, both green walls, both invisible walls) are 'sets'
-            //I THINK these ones are intuitive and desired, but maybe I'm wrong
-            //you could argue for green/purple toggle walls to be sets, but it was pointed out to me it's more interesting if they aren't since they're mutable at runtime. So maybe ice/force floors are the only ones we want
+        can_enter_terrain(shark, t2) {
+            //sets are basically: floor-like, wall-like, water, ice, force floor, blue wall, green wall
+            //floor-like and wall-like are the most and second most up for debate, I'd say
+            //use custom walls/floors if you want to break up a wallshark/floorshark's accessible area
             //ALSO, sharks can move freely into or out of cloners, because that's kickass
+            let t1 = shark.cell.get_terrain().type.name;
+            if (t1 === t2) {
+                return true;
+            }
+            if (t1 === 'cloner' || t2 === 'cloner') {
+                return true;
+            }
+            if (shark.is_pulled) {
+                return true;
+            }
+            
+            //TODO cache?
+            let floor_set = new Set(['floor', 'floor_letter', 'green_floor', 'purple_floor', 'button_green', 'button_blue', 'button_yellow', 'button_red', 'button_brown', 'trap', 'button_orange', 'flame_jet_off', 'flame_jet_on', 'teleport_blue', 'teleport_red', 'teleport_green', 'teleport_yellow', 'logic_gate', 'button_pink', 'button_black', 'light_switch_off', 'light_switch_on', 'button_gray', 'cracked_floor', 'turntable_cw', 'turntable_ccw', 'teleport_blue_exit', 'electrified_floor', 'sokoban_button', 'sokoban_floor']);
+            let wall_set = new Set(['wall', 'wall_invisible', 'wall_appearing', 'green_wall', 'purple_wall', 'sokoban_wall']);
+            let waters = new Set(['water', 'turtle']);
             let ices = new Set(['ice', 'ice_nw', 'ice_ne', 'ice_sw', 'ice_se', 'cracked_ice']);
             let force_floors = new Set([
             'force_floor_n', 'force_floor_s', 'force_floor_e', 'force_floor_w', 'force_floor_all']);
-            return t1 === t2
-            || (ices.has(t1) && ices.has(t2))
-            || (force_floors.has(t1) && force_floors.has(t2))
-            || t1 === 'cloner' || t2 === 'cloner';
+            let blue_walls = new Set(['fake_floor', 'fake_wall']);
+            let green_walls = new Set(['popdown_floor', 'popdown_wall']);
+            let array_of_sets = [floor_set, wall_set, waters, ices, force_floors, blue_walls, green_walls];
+            
+            for (var i = 0; i < array_of_sets.length; ++i)
+            {
+                if (array_of_sets[i].has(t1) && array_of_sets[i].has(t2)) {
+                    return true;
+                }
+            }
+            
+            //for hiking boots check
+            let hikeables = new Set(['dirt', 'gravel', 'spikes']);
+            
+            if (shark.has_item('fire_boots') && t2 === 'fire') {
+                return true;
+            }
+            if (shark.has_item('flippers') && waters.has(t2)) {
+                return true;
+            }
+            if (shark.has_item('cleats') && ices.has(t2)) {
+                return true;
+            }
+            if (shark.has_item('suction_boots') && force_floors.has(t2)) {
+                return true;
+            }
+            if (shark.has_item('hiking_boots') && hikeables.has(t2)) {
+                return true;
+            }
+            
+            return false;
         },
         blocked_by(me, level, other) {
             //ignore everything that's not terrain - we'll do our check when we find the terrain on the whole cell
@@ -2668,16 +2732,18 @@ const TILE_TYPES = {
                 }
             }
             let result = true;
-            if (this.terrains_are_same_set(other.type.name, me.home)) {
+            if (this.can_enter_terrain(me, other.type.name)) {
                 result = false;
             }
             if (result && has_player && !(other.type.blocks_collision & COLLISION.monster_general)) {
                 //probe tile to see if it'd accept a generic monster (covers fire and rff edge cases)
                 if (other.type.blocks) {
-                    let dummy = { type: TILE_TYPES['ball'] };
-                    if (!other.type.blocks(other, level, dummy)) {
+                    let old_type = me.type;
+                    me.type = TILE_TYPES['ball'];
+                    if (!other.type.blocks(other, level, me)) {
                         result = false;
                     }
+                    me.type = old_type;
                 }
                 else
                 {
@@ -2687,6 +2753,9 @@ const TILE_TYPES = {
             if (has_player && !result) {
                 level._set_tile_prop(me, 'visual_state', 'killer');
             }
+            if (result && me.mood === 'fireball') {
+                level._set_tile_prop(me, 'mood', 'bug');
+            }
             return result;
         },
         decide_movement(me, level) {
@@ -2694,13 +2763,26 @@ const TILE_TYPES = {
             level._set_tile_prop(me, 'visual_state', 'normal');
             // can we smell blood?
             if (Math.abs(level.player.cell.x - me.cell.x) < 3 && Math.abs(level.player.cell.y - me.cell.y) < 3) {
+                level._set_tile_prop(me, 'mood', 'teeth');
                 return pursue_player(me, level);
             }
-            //otherwise...
-            // always try turning as left as possible, and fall back to less-left turns
-            let d = DIRECTIONS[me.direction];
-            return [d.left, me.direction, d.right, d.opposite];
+            else {
+                if (me.mood === 'teeth')
+                {
+                    level._set_tile_prop(me, 'mood', 'fireball');
+                }
+            }
+            //otherwise, bug or fireball (fireball lasts until we get blocked once)
+            if (me.mood === 'fireball') {
+                let d = DIRECTIONS[me.direction];
+                return [me.direction, d.right, d.left, d.opposite];
+            }
+            else {
+                let d = DIRECTIONS[me.direction];
+                return [d.left, me.direction, d.right, d.opposite];
+            }
         },
+        //hook/shark explosion is handled in hook on_approach
         visual_state(me) {
             return (me && me.visual_state) ?? 'normal';
         },
@@ -2963,6 +3045,13 @@ const TILE_TYPES = {
     },
     hook: {
         ...COMMON_TOOL,
+        on_approach(me, level, other) {
+            if (other.type.name === 'shark') {
+                //Dropped hooks blow up sharks
+                level.sfx.play_once('splash', other.cell);
+                level.transmute_tile(other, 'splash');
+            }
+        },
     },
     skeleton_key: {
         ...COMMON_TOOL,

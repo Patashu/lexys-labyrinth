@@ -2266,7 +2266,7 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     shark: {
         name: "Shark",
-        desc: "Swims through whatever initial tile it was placed on, only emerging to kill the player. Follows the left wall, unless the player is within 2 tiles, then it chases the player.",
+        desc: "Swims through any terrain, only emerging to kill the player. Can't change between types of terrain under its own power. Follows the left wall, unless the player is within 2 tiles, then it chases the player. If it loses track of the player, it will behave like a fireball until it's blocked once, then return to following the left wall. Moves at half speed while not chasing. Ignores the damaging (except flame jet/electrified floor), permanent transformation and sliding/speed change (except teleporters/turntable) effects of terrain. Can be hooked between terrain types. Dies if it touches a hook. If holding boots, can enter that boots' terrain types.",
     },
     sokoban_block: {
         name: "Sokoban block",
