@@ -154,6 +154,7 @@ export const CC2_TILESET_LAYOUT = {
     explosion_nb: [[0, 5], [1, 5], [2, 5], [3, 5]],
     splash_slime: [[0, 5], [1, 5], [2, 5], [3, 5]],
     splash: [[4, 5], [5, 5], [6, 5], [7, 5]],
+    splash_nb: [[4, 5], [5, 5], [6, 5], [7, 5]],
     flame_jet_off: [8, 5],
     flame_jet_on: {
         __special__: 'animated',
@@ -902,6 +903,7 @@ export const TILE_WORLD_TILESET_LAYOUT = {
     bogus_player_burned: [3, 5],
     explosion: [3, 6],
     explosion_nb: [3, 6],
+    splash_nb: [3, 3],
     explosion_other: [3, 7],  // TODO ???
     // 3, 8 unused
     bogus_player_win: [3, 9],  // TODO 10 and 11 too?  does this animate?
@@ -1985,6 +1987,7 @@ export const LL_TILESET_LAYOUT = {
     explosion: [[16, 26], [17, 26], [18, 26], [19, 26]],
     explosion_nb: [[16, 26], [17, 26], [18, 26], [19, 26]],
     splash: [[16, 27], [17, 27], [18, 27], [19, 27]],
+    splash_nb: [[16, 27], [17, 27], [18, 27], [19, 27]],
     splash_slime: [[16, 28], [17, 28], [18, 28], [19, 28]],
     fall: [[16, 29], [17, 29], [18, 29], [19, 29]],
     player1_exit: [[20, 28], [21, 28], [22, 28], [23, 28]],

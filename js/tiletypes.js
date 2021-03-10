@@ -2732,10 +2732,13 @@ const TILE_TYPES = {
             //Tiles with players on them don't block if their tile is our home OR a normal monster could enter it.
             //Tiles without players don't block if their tile is our home.
             //Tiles with actors (who aren't the player) block us (I think the reason why we need to define this back in is because we phase too well?)
+            //Except for doppels, which sharks eat.
             let has_player = false;
+            let has_doppel = false;
             if (other.cell.get_actor() !== null) {
                 has_player = other.cell.get_actor() === level.player;
-                if (!has_player) {
+                has_doppel = other.cell.get_actor().type.name === 'doppelganger1' || other.cell.get_actor().type.name === 'doppelganger2';
+                if (!has_player && !has_doppel) {
                     return true;
                 }
             }
@@ -2761,6 +2764,12 @@ const TILE_TYPES = {
             }
             if (has_player && !result) {
                 level._set_tile_prop(me, 'visual_state', 'killer');
+            }
+            if (has_doppel && !result) {
+                //eat the doppel!
+                level._set_tile_prop(me, 'visual_state', 'killer');
+                level.sfx.play_once('splash', other.cell);
+                level.transmute_tile(other.cell.get_actor(), 'splash_nb');
             }
             //turn from lance back to bug when we find a wall
             if (result && me.mood === 'lance') {
@@ -3357,6 +3366,12 @@ const TILE_TYPES = {
     // Non-blocking explosion used for better handling edge cases with dynamite and bowling balls,
     // without changing gameplay
     explosion_nb: {
+        layer: LAYERS.vfx,
+        is_actor: true,
+        collision_mask: 0,
+        ttl: 16,
+    },
+    splash_nb: {
         layer: LAYERS.vfx,
         is_actor: true,
         collision_mask: 0,
