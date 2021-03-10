@@ -2743,7 +2743,8 @@ const TILE_TYPES = {
             if (this.can_enter_terrain(me, other)) {
                 result = false;
             }
-            if (result && has_player && !(other.type.blocks_collision & COLLISION.monster_general)) {
+            //'shark bite' mechanic - bite a player on an adjacent tile who's finished moving and could be entered by a normal monster
+            if (result && has_player && other.cell.get_actor().movement_cooldown === 0 && !(other.type.blocks_collision & COLLISION.monster_general)) {
                 //probe tile to see if it'd accept a generic monster (covers fire and rff edge cases)
                 if (other.type.blocks) {
                     let old_type = me.type;
@@ -2761,6 +2762,7 @@ const TILE_TYPES = {
             if (has_player && !result) {
                 level._set_tile_prop(me, 'visual_state', 'killer');
             }
+            //turn from lance back to bug when we find a wall
             if (result && me.mood === 'lance') {
                 level._set_tile_prop(me, 'mood', 'bug');
             }
