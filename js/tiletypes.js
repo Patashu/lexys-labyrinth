@@ -2661,12 +2661,13 @@ const TILE_TYPES = {
             me.visual_state = 'normal';
             me.mood = 'bug';
         },
-        can_enter_terrain(shark, t2) {
+        can_enter_terrain(shark, dest) {
             //sets are basically: floor-like, wall-like, water, ice, force floor, blue wall, green wall
             //floor-like and wall-like are the most and second most up for debate, I'd say
             //use custom walls/floors if you want to break up a wallshark/floorshark's accessible area
             //ALSO, sharks can move freely into or out of cloners, because that's kickass
             let t1 = shark.cell.get_terrain().type.name;
+            let t2 = dest.cell.get_terrain().type.name;
             if (t1 === t2) {
                 return true;
             }
@@ -2675,6 +2676,13 @@ const TILE_TYPES = {
             }
             if (shark.is_pulled) {
                 return true;
+            }
+            //canopy-sharks and swivel sharks!
+            if (shark.cell[LAYERS.canopy] && dest.cell[LAYERS.canopy]) {
+              return true;
+            }
+            if (shark.cell[LAYERS.swivel] && dest.cell[LAYERS.swivel]) {
+              return true;
             }
             
             //TODO cache?
@@ -2732,7 +2740,7 @@ const TILE_TYPES = {
                 }
             }
             let result = true;
-            if (this.can_enter_terrain(me, other.type.name)) {
+            if (this.can_enter_terrain(me, other)) {
                 result = false;
             }
             if (result && has_player && !(other.type.blocks_collision & COLLISION.monster_general)) {
