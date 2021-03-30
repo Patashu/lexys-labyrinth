@@ -1620,7 +1620,7 @@ const TILE_TYPES = {
             level._set_tile_prop(me, 'presses', (me.presses ?? 0) + 1);
         },
         add_press(me, level, is_wire = false) {
-            level._set_tile_prop(me, 'presses', me.presses + 1);
+            level._set_tile_prop(me, 'presses', (me.presses ?? 0) + 1);
             if (me.presses === 1 && ! is_wire) {
                 // Free any actor on us, if we went from 0 to 1 presses (i.e. closed to open)
                 let actor = me.cell.get_actor();
@@ -1632,7 +1632,7 @@ const TILE_TYPES = {
             }
         },
         remove_press(me, level) {
-            level._set_tile_prop(me, 'presses', Math.max(0, me.presses - 1));
+            level._set_tile_prop(me, 'presses', Math.max(0, (me.presses ?? 0) - 1));
             if (me._initially_open) {
                 level._set_tile_prop(me, '_initially_open', false);
             }
