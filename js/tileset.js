@@ -1101,6 +1101,48 @@ export const LL_TILESET_LAYOUT = {
         hidden: [9, 2],
         revealed: [9, 3],
     },
+    cloud: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [8, 15],
+        revealed: [8, 14],
+    },
+    cloud_player: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [9, 15],
+        revealed: [9, 14],
+    },
+    cloud_monster: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [10, 15],
+        revealed: [10, 14],
+    },
+    cloud_after: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [8, 15],
+        revealed: [8, 14],
+    },
+    cloud_player_after: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [9, 15],
+        revealed: [9, 14],
+    },
+    cloud_monster_after: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [10, 15],
+        revealed: [10, 14],
+    },
+    hidden_item: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [8, 18],
+        revealed: [8, 18],
+    },
     no_player1_sign: [10, 2],
     no_player2_sign: [10, 3],
     '#active-player-background': [11, 2],
@@ -2608,6 +2650,17 @@ export class Tileset {
             }
             else if (drawspec.__special__ === 'perception') {
                 if (drawspec.modes.has(packet.perception)) {
+                    this.draw_drawspec(drawspec.revealed, name, tile, packet);
+                }
+                else {
+                    this.draw_drawspec(drawspec.hidden, name, tile, packet);
+                }
+            }
+            else if (drawspec.__special__ === 'perception_2') {
+                if (drawspec.modes.has(packet.perception)) {
+                    if (tile.hidden_tile) {
+                        this.draw_drawspec(this.layout[tile.hidden_tile.type.name], tile.hidden_tile.type.name, tile, packet);
+                    }
                     this.draw_drawspec(drawspec.revealed, name, tile, packet);
                 }
                 else {

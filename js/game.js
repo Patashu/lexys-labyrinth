@@ -1934,6 +1934,21 @@ export class Level extends LevelInterface {
                 tile.type.on_arrive(tile, this, actor);
             }
         }
+        
+        //can't think of a cleaner implementation - second pass for hidden tiles
+        for (let layer = LAYERS.MAX - 1; layer >= 0; layer--) {
+            let tile = cell[layer];
+            if (! tile)
+                continue;
+            if (tile === actor)
+                continue;
+            if (actor.ignores(tile.type.name))
+                continue;
+                
+            if (tile.type.after_arrive) {
+                tile.type.after_arrive(tile, this, actor);
+            }
+        }
 
         // Play step sound
         if (actor === this.player) {
@@ -2741,6 +2756,13 @@ export class Level extends LevelInterface {
         }
 
         let old_type = tile.type;
+        if (old_type.on_death) {
+            old_type.on_death(this, tile);
+            //might have been destroyed by that
+            if (tile.cell == null) {
+                return;
+            }
+        }
         let new_type = TILE_TYPES[name];
         if (old_type.layer !== new_type.layer) {
             // Move it to the right layer!

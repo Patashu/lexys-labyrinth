@@ -1634,6 +1634,10 @@ const EDITOR_PALETTE = [{
         'sokoban_block/yellow',
         'sokoban_button/yellow',
         'sokoban_wall/yellow',
+        'cloud',
+        'cloud_player',
+        'cloud_monster',
+        'hidden_item',
     ],
 }];
 
@@ -2279,6 +2283,22 @@ const EDITOR_TILE_DESCRIPTIONS = {
     sokoban_wall: {
         name: "Sokoban wall",
         desc: "Acts like wall.  Turns to floor while all sokoban buttons of the same color are pressed.",
+    },
+    cloud: {
+        name: "Cloud",
+        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on.",
+    },
+    cloud_player: {
+        name: "Cloud (player only)",
+        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by players.",
+    },
+    cloud_monster: {
+        name: "Cloud (monster only)",
+        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by monsters.",
+    },
+    hidden_item: {
+        name: "Hidden item",
+        desc: "Hides and negates the properties of the item underneath until after the first time it's stepped on.",
     },
 };
 

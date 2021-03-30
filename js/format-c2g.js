@@ -909,7 +909,7 @@ const TILE_ENCODING = {
         modifier: modifier_wire,
         is_extension: true,
     },
-	0xf1: {
+    0xf1: {
         name: 'sokoban_block',
         has_next: true,
         modifier: modifier_color,
@@ -926,12 +926,32 @@ const TILE_ENCODING = {
         modifier: modifier_color,
         is_extension: true,
     },
-	0xf4: {
+    0xf4: {
         name: 'shark',
         has_next: true,
         is_extension: true,
         extra_args: [arg_direction],
-	},
+    },
+    0xf5: {
+        name: 'cloud',
+        has_next: true,
+        is_extension: true,
+    },
+    0xf6: {
+        name: 'cloud_player',
+        has_next: true,
+        is_extension: true,
+    },
+    0xf7: {
+        name: 'cloud_monster',
+        has_next: true,
+        is_extension: true,
+    },
+    0xf8: {
+        name: 'hidden_item',
+        has_next: true,
+        is_extension: true,
+    },
 };
 const REVERSE_TILE_ENCODING = {};
 for (let [tile_byte, spec] of Object.entries(TILE_ENCODING)) {

@@ -248,6 +248,33 @@ const COMMON_TOOL = {
     item_priority: PICKUP_PRIORITIES.normal,
 };
 
+const COMMON_CLOUD_BEFORE = {
+    layer: LAYERS.canopy,
+    on_ready(me, level) {
+        let terrain = me.cell.get_terrain();
+        if (terrain && (me.hidden_tile === undefined || me.hidden_tile === null)) {
+            level._set_tile_prop(me, "hidden_tile", terrain);
+            //Surprise! Now WE'RE the floor.
+            level.remove_tile(terrain);
+            level.transmute_tile(me, me.type.name + '_after');
+        }
+    },
+};
+
+const COMMON_CLOUD_AFTER = {
+    layer: LAYERS.terrain,
+    on_arrive(me, level, other) {
+        this.on_death(me, level);
+    },
+    on_death(me, level) {
+        if (me.hidden_tile) {
+            var cell = me.cell;
+            level.remove_tile(me);
+            level.add_tile(me.hidden_tile, cell);
+        }
+    }
+}
+
 const TILE_TYPES = {
     // Floors and walls
     floor: {
@@ -1151,6 +1178,48 @@ const TILE_TYPES = {
     gift_bow: {
         layer: LAYERS.item_mod,
         item_modifier: 'pickup',
+    },
+    //hidden tiles
+    hidden_item: {
+        layer: LAYERS.item_mod,
+        on_ready(me, level) {
+            let item = me.cell.get_item();
+            if (item) {
+                level._set_tile_prop(me, "hidden_tile", item);
+                level.remove_tile(item);
+            }
+        },
+        after_arrive(me, level, other) {
+            this.on_death(me, level);
+            level.remove_tile(me);
+        },
+        on_death(me, level) {
+            if (me.hidden_tile) {
+                level.add_tile(me.hidden_tile, me.cell);
+            }
+        }
+    },
+    cloud: {
+        ...COMMON_CLOUD_BEFORE,
+    },
+    cloud_player: {
+        ...COMMON_CLOUD_BEFORE,
+        blocks_collision: COLLISION.monster_general,
+    },
+    cloud_monster: {
+        ...COMMON_CLOUD_BEFORE,
+        blocks_collision: COLLISION.playerlike,
+    },
+    cloud_after: {
+        ...COMMON_CLOUD_AFTER,
+    },
+    cloud_player_after: {
+        ...COMMON_CLOUD_AFTER,
+        blocks_collision: COLLISION.monster_general,
+    },
+    cloud_monster_after: {
+        ...COMMON_CLOUD_AFTER,
+        blocks_collision: COLLISION.playerlike,
     },
 
     // Mechanisms
