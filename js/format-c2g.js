@@ -952,6 +952,11 @@ const TILE_ENCODING = {
         has_next: true,
         is_extension: true,
     },
+    0xf9: {
+        name: 'cloud_water',
+        has_next: true,
+        is_extension: true,
+    },
 };
 const REVERSE_TILE_ENCODING = {};
 for (let [tile_byte, spec] of Object.entries(TILE_ENCODING)) {

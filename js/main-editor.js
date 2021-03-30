@@ -1637,6 +1637,7 @@ const EDITOR_PALETTE = [{
         'cloud',
         'cloud_player',
         'cloud_monster',
+        'cloud_water',
         'hidden_item',
     ],
 }];
@@ -2286,15 +2287,19 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     cloud: {
         name: "Cloud",
-        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on.",
+        desc: "Acts like floor. Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. If stepped on by a non-block non-player actor, turns into floor instead.",
     },
     cloud_player: {
-        name: "Cloud (player only)",
-        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by players.",
+        name: "Cloud (Dirt)",
+        desc: "Acts like dirt. Hides and negates the properties of the terrain underneath (but NOT the item) until after it's cleared.",
     },
     cloud_monster: {
         name: "Cloud (monster only)",
-        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by monsters.",
+        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by non-player actors, and unlike regular Cloud does reveal the underlying tile.",
+    },
+    cloud_water: {
+        name: "Cloud (Water)",
+        desc: "Acts like water. Hides and negates the properties of the terrain underneath (but NOT the item). When filled in, turns into Cloud (Dirt) instead of Dirt.",
     },
     hidden_item: {
         name: "Hidden item",

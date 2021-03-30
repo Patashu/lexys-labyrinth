@@ -48,6 +48,50 @@ function blocks_leaving_thin_walls(me, actor, direction) {
     return me.type.thin_walls.has(direction) && actor.type.name !== 'ghost';
 }
 
+function water_splash(me, level, other) {
+    // TODO cc1 allows items under water, i think; water was on the upper layer
+    level.sfx.play_once('splash', me.cell);
+    var cloud_water = me.type.name === 'cloud_water_after';
+    if (other.type.name === 'dirt_block') {
+        level.transmute_tile(other, 'splash');
+        level.transmute_tile(me, cloud_water ? 'cloud_player_after' : 'dirt');
+    }
+    else if (other.type.name === 'frame_block') {
+        level.transmute_tile(other, 'splash');
+        level.transmute_tile(me, cloud_water ? 'cloud_after' : 'floor');
+    }
+    else if (other.type.name === 'glass_block') {
+        level.transmute_tile(other, 'splash');
+        level.transmute_tile(me, cloud_water ? 'cloud_after' : 'floor');
+    }
+    else if (other.type.name === 'ice_block') {
+        level.transmute_tile(other, 'splash');
+        level.transmute_tile(me, 'ice');
+    }
+    else if (other.type.name === 'boulder') {
+        level.transmute_tile(other, 'splash');
+        level.transmute_tile(me, 'gravel');
+    }
+    else if (other.type.name === 'circuit_block') {
+        level.transmute_tile(me, cloud_water ? 'cloud_after' : 'floor');
+        level._set_tile_prop(me, 'wire_directions', other.wire_directions);
+        level.transmute_tile(other, 'splash');
+        level.recalculate_circuitry_next_wire_phase = true;
+    }
+    else if (other.type.name === 'sokoban_block') {
+        level.transmute_tile(me, ({
+            red: 'floor_custom_pink',
+            blue: 'floor_custom_blue',
+            yellow: 'floor_custom_yellow',
+            green: 'floor_custom_green',
+        })[other.color]);
+        level.transmute_tile(other, 'splash');
+    }
+    else {
+        level.kill_actor(other, me, 'splash', null, 'drowned');
+    }
+}
+
 function _define_door(key) {
     return {
         layer: LAYERS.terrain,
@@ -149,7 +193,7 @@ function player_visual_state(me) {
     // This is slightly complicated.  We should show a swimming pose while still in water, or moving
     // away from water (as CC2 does), but NOT when stepping off a lilypad (which will already have
     // been turned into water), and NOT without flippers (which can happen if we start on water)
-    else if (me.cell && (me.previous_cell || me.cell).has('water') &&
+    else if (me.cell && ((me.previous_cell || me.cell).has('water') || (me.previous_cell || me.cell).has('cloud_water_after')) &&
         ! me.not_swimming && me.has_item('flippers'))
     {
         return 'swimming';
@@ -263,11 +307,53 @@ const COMMON_CLOUD_BEFORE = {
 
 const COMMON_CLOUD_AFTER = {
     layer: LAYERS.terrain,
+    get_rid_of_hidden_item(me, level) {
+        if (me.cell.get_item_mod() && me.cell.get_item_mod().type.name === 'hidden_item') {
+            level._set_tile_prop(me.cell.get_item_mod(), 'dont_reveal', true);
+            level.remove_tile(me.cell.get_item_mod());
+        }
+    },
     on_arrive(me, level, other) {
+        //water check
+        if (me.type.name === 'cloud_water_after') {
+            me.dont_reveal = true;
+            if (other.ignores('water')) {
+                //erase bottom
+                this.get_rid_of_hidden_item(me, level);
+                level.transmute_tile(me, 'water');
+            }
+            else {
+                water_splash(me, level, other);
+            }
+            me.dont_reveal = false;
+            return;
+        }
+        //MSCC bomb/X illegal tiles turn into floor/X illegal tiles not straight into X
+        if (other.type.ttl) { return; }
+        //silly dirt check
+         if (me.type.name === 'cloud_player_after' && other.type.name === 'ghost' && ! other.has_item('hiking_boots')) {
+            me.dont_reveal = true;
+            this.get_rid_of_hidden_item(me, level);
+            level.transmute_tile(me, 'dirt');
+            me.dont_reveal = false;
+            return;
+         }
+        //MSCC: when a non-player non-block actor steps on an illegal tile the lower layer is erased instead of revealed
+        if (me.type.name !== 'cloud_monster_after' && !(other.type.is_player || other.type.is_block)) {
+            me.dont_reveal = true;
+            this.get_rid_of_hidden_item(me, level);
+            level.transmute_tile(me, 'floor');
+            me.dont_reveal = false;
+            return;
+        }
+        //guess I'll always play this
+        if (other === level.player) {
+            level.sfx.play_once('step-gravel', me.cell);
+        }
         this.on_death(me, level);
     },
     on_death(me, level) {
-        if (me.hidden_tile) {
+        if (me.hidden_tile && !me.dont_reveal) {
             var cell = me.cell;
             level.remove_tile(me);
             level.add_tile(me.hidden_tile, cell);
@@ -819,46 +905,7 @@ const TILE_TYPES = {
                 return true;
         },
         on_arrive(me, level, other) {
-            // TODO cc1 allows items under water, i think; water was on the upper layer
-            level.sfx.play_once('splash', me.cell);
-            if (other.type.name === 'dirt_block') {
-                level.transmute_tile(other, 'splash');
-                level.transmute_tile(me, 'dirt');
-            }
-            else if (other.type.name === 'frame_block') {
-                level.transmute_tile(other, 'splash');
-                level.transmute_tile(me, 'floor');
-            }
-            else if (other.type.name === 'glass_block') {
-                level.transmute_tile(other, 'splash');
-                level.transmute_tile(me, 'floor');
-            }
-            else if (other.type.name === 'ice_block') {
-                level.transmute_tile(other, 'splash');
-                level.transmute_tile(me, 'ice');
-            }
-            else if (other.type.name === 'boulder') {
-                level.transmute_tile(other, 'splash');
-                level.transmute_tile(me, 'gravel');
-            }
-            else if (other.type.name === 'circuit_block') {
-                level.transmute_tile(me, 'floor');
-                level._set_tile_prop(me, 'wire_directions', other.wire_directions);
-                level.transmute_tile(other, 'splash');
-                level.recalculate_circuitry_next_wire_phase = true;
-            }
-            else if (other.type.name === 'sokoban_block') {
-                level.transmute_tile(me, ({
-                    red: 'floor_custom_pink',
-                    blue: 'floor_custom_blue',
-                    yellow: 'floor_custom_yellow',
-                    green: 'floor_custom_green',
-                })[other.color]);
-                level.transmute_tile(other, 'splash');
-            }
-            else {
-                level.kill_actor(other, me, 'splash', null, 'drowned');
-            }
+            water_splash(me, level, other);
         },
     },
     turtle: {
@@ -1190,11 +1237,21 @@ const TILE_TYPES = {
             }
         },
         after_arrive(me, level, other) {
+            //nevermind if something blew up while entering our tile
+            if (other.type.ttl) { return; }
+            //if we're still part of an illegal tile, we get erased
+            if (me.cell.get_terrain().type.name.startsWith("cloud")) {
+                level._set_tile_prop(me, "dont_reveal", true);
+            }
+            //MSCC: when a non-player non-block actor steps on an illegal tile the lower layer is erased instead of revealed
+            if (!(other.type.is_player || other.type.is_block))    {
+                level._set_tile_prop(me, "dont_reveal", true);
+            }
             this.on_death(me, level);
             level.remove_tile(me);
         },
         on_death(me, level) {
-            if (me.hidden_tile) {
+            if (me.hidden_tile && !me.dont_reveal) {
                 level.add_tile(me.hidden_tile, me.cell);
             }
         }
@@ -1204,22 +1261,35 @@ const TILE_TYPES = {
     },
     cloud_player: {
         ...COMMON_CLOUD_BEFORE,
-        blocks_collision: COLLISION.monster_general,
     },
     cloud_monster: {
         ...COMMON_CLOUD_BEFORE,
-        blocks_collision: COLLISION.playerlike,
+    },
+    cloud_water: {
+        ...COMMON_CLOUD_BEFORE,
     },
     cloud_after: {
         ...COMMON_CLOUD_AFTER,
     },
     cloud_player_after: {
         ...COMMON_CLOUD_AFTER,
-        blocks_collision: COLLISION.monster_general,
+        blocks_collision: COLLISION.block_cc1 | COLLISION.monster_general,
+        blocks(me, level, other) {
+            return ((other.type.name === 'player2' || other.type.name === 'doppelganger2') &&
+                ! other.has_item('hiking_boots'));
+        },
     },
     cloud_monster_after: {
         ...COMMON_CLOUD_AFTER,
         blocks_collision: COLLISION.playerlike,
+    },
+    cloud_water_after: {
+        ...COMMON_CLOUD_AFTER,
+        blocks(me, level, other) {
+            // Water blocks ghosts...  unless they have flippers
+            if (other.type.name === 'ghost' && ! other.has_item('flippers'))
+                return true;
+        },
     },
 
     // Mechanisms
@@ -2709,6 +2779,7 @@ const TILE_TYPES = {
             'socket',
             'popwall',
             'dirt',
+            //TODO: clouds or nah?
             
             //damaging/forcing terrain (and 3 more permanent transformations)
             'slime',
@@ -2755,6 +2826,7 @@ const TILE_TYPES = {
             }
             
             //TODO cache?
+            //TODO clouds?
             let floor_set = new Set(['floor', 'floor_letter', 'green_floor', 'purple_floor', 'button_green', 'button_blue', 'button_yellow', 'button_red', 'button_brown', 'trap', 'button_orange', 'flame_jet_off', 'flame_jet_on', 'teleport_blue', 'teleport_red', 'teleport_green', 'teleport_yellow', 'logic_gate', 'button_pink', 'button_black', 'light_switch_off', 'light_switch_on', 'button_gray', 'cracked_floor', 'turntable_cw', 'turntable_ccw', 'teleport_blue_exit', 'electrified_floor', 'sokoban_button', 'sokoban_floor']);
             let wall_set = new Set(['wall', 'wall_invisible', 'wall_appearing', 'green_wall', 'purple_wall', 'sokoban_wall']);
             let waters = new Set(['water', 'turtle']);

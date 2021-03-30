@@ -1965,7 +1965,7 @@ export class Level extends LevelInterface {
             else if (terrain.type.name === 'gravel' || terrain.type.name === 'railroad') {
                 this.sfx.play_once('step-gravel');
             }
-            else if (terrain.type.name === 'water') {
+            else if (terrain.type.name === 'water' || terrain.type.name === 'cloud_water_after') {
                 if (actor.ignores(terrain.type.name)) {
                     this.sfx.play_once('step-water');
                 }
@@ -2757,7 +2757,7 @@ export class Level extends LevelInterface {
 
         let old_type = tile.type;
         if (old_type.on_death) {
-            old_type.on_death(this, tile);
+            old_type.on_death(tile, this);
             //might have been destroyed by that
             if (tile.cell == null) {
                 return;

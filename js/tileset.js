@@ -1119,6 +1119,12 @@ export const LL_TILESET_LAYOUT = {
         hidden: [10, 15],
         revealed: [10, 14],
     },
+    cloud_water: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [11, 15],
+        revealed: [11, 14],
+    },
     cloud_after: {
         __special__: 'perception_2',
         modes: new Set(['editor', 'xray']),
@@ -1136,6 +1142,12 @@ export const LL_TILESET_LAYOUT = {
         modes: new Set(['editor', 'xray']),
         hidden: [10, 15],
         revealed: [10, 14],
+    },
+    cloud_water_after: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [11, 15],
+        revealed: [11, 14],
     },
     hidden_item: {
         __special__: 'perception_2',
