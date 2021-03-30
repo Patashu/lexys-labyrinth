@@ -2299,11 +2299,11 @@ const EDITOR_TILE_DESCRIPTIONS = {
     },
     cloud_water: {
         name: "Cloud (Water)",
-        desc: "Acts like water. Hides and negates the properties of the terrain underneath (but NOT the item). When filled in, turns into Cloud (Dirt) instead of Dirt.",
+        desc: "Acts like water. Hides and negates the properties of the terrain underneath (but NOT the item). Underlying terrain is erased by swimming actors. When filled by a block, turns into Cloud or Cloud (Dirt) instead of Floor/Dirt.",
     },
     hidden_item: {
         name: "Hidden item",
-        desc: "Hides and negates the properties of the item underneath until after the first time it's stepped on.",
+        desc: "Hides and negates the properties of the item underneath until after the first time it's stepped on. When stepped on by a non-block non-player actor, is erased.",
     },
 };
 
