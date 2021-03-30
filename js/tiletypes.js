@@ -339,12 +339,28 @@ const COMMON_CLOUD_AFTER = {
             return;
          }
         //MSCC: when a non-player non-block actor steps on an illegal tile the lower layer is erased instead of revealed
+        //TODO: block on item/hidden terrain leaves the item and erases the terrain. (block on item/item erases the bottom item but I can't place that yet.) (TODO: I think for hidden item/hidden terrain you erase the item and leave the terrain, just to be different)
         if (me.type.name !== 'cloud_monster_after' && !(other.type.is_player || other.type.is_block)) {
             me.dont_reveal = true;
             this.get_rid_of_hidden_item(me, level);
             level.transmute_tile(me, 'floor');
             me.dont_reveal = false;
             return;
+        }
+        //MSCC: when a block steps on an illegal tile and both sides aren't floor, the bottom side is erased
+        //block item/hidden terrain erases the terrain.
+        //I've decided block on hidden item/hidden terrain erases the item to be different.
+        //terrain/terrain and item/item don't really matter yet.
+        if (me.type.name !== 'cloud_monster_after' && other.type.is_block) {
+            if (me.cell.get_item_mod() && me.cell.get_item_mod().type.name == 'hidden_item') {
+                this.get_rid_of_hidden_item(me, level);
+            }
+            else if (me.cell.get_item()) {
+                me.dont_reveal = true;
+                level.transmute_tile(me, 'floor');
+                me.dont_reveal = false;
+				return;
+            }
         }
         //guess I'll always play this
         if (other === level.player) {
