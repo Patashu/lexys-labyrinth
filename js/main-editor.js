@@ -47,10 +47,15 @@ class EditorLevelMetaOverlay extends DialogOverlay {
         let dl = mk('dl.formgrid');
         this.main.append(dl);
 
-        let time_limit_input = mk('input', {name: 'time_limit', type: 'number', min: 0, max: 999, value: stored_level.time_limit});
+        let time_limit_input = mk('input', {name: 'time_limit', type: 'number', min: 0, max: 65535, value: stored_level.time_limit});
         let time_limit_output = mk('output');
         let update_time_limit = () => {
             let time_limit = parseInt(time_limit_input.value, 10);
+            // FIXME need a change event for this tbh?
+            // FIXME handle NaN; maybe block keydown of not-numbers
+            time_limit = Math.max(0, Math.min(65535, time_limit));
+            time_limit_input.value = time_limit;
+
             let text;
             if (time_limit === 0) {
                 text = "No time limit";
@@ -63,6 +68,28 @@ class EditorLevelMetaOverlay extends DialogOverlay {
         update_time_limit();
         time_limit_input.addEventListener('input', update_time_limit);
 
+        let make_size_input = (name) => {
+            let input = mk('input', {name: name, type: 'number', min: 10, max: 100, value: stored_level[name]});
+            // TODO maybe block keydown of non-numbers too?
+            // Note that this is a change event, not an input event, so we don't prevent them from
+            // erasing the whole value to type a new one
+            input.addEventListener('change', ev => {
+                let value = parseInt(ev.target.value, 10);
+                if (isNaN(value)) {
+                    ev.target.value = stored_level[name];
+                }
+                else if (value < 1) {
+                    // Smaller than 10×10 isn't supported by CC2, but LL doesn't mind, so let it
+                    // through if they try it manually
+                    ev.target.value = 1;
+                }
+                else if (value > 100) {
+                    ev.target.value = 100;
+                }
+            });
+            return input;
+        };
+
         let make_radio_set = (name, options) => {
             let elements = [];
             for (let [label, value] of options) {
@@ -72,52 +99,48 @@ class EditorLevelMetaOverlay extends DialogOverlay {
 
         dl.append(
             mk('dt', "Title"),
-            mk('dd', mk('input', {name: 'title', type: 'text', value: stored_level.title})),
+            mk('dd.-one-field', mk('input', {name: 'title', type: 'text', value: stored_level.title})),
             mk('dt', "Author"),
-            mk('dd', mk('input', {name: 'author', type: 'text', value: stored_level.author})),
+            mk('dd.-one-field', mk('input', {name: 'author', type: 'text', value: stored_level.author})),
+            mk('dt', "Comment"),
+            mk('dd.-textarea', mk('textarea', {name: 'comment', rows: 4, cols: 20}, stored_level.comment)),
             mk('dt', "Time limit"),
-            mk('dd',
-                time_limit_input,
-                " ",
-                time_limit_output,
-                mk('br'),
-                mk_button("None", ev => {
-                    this.root.elements['time_limit'].value = 0;
-                    update_time_limit();
-                }),
-                mk_button("−30s", ev => {
-                    this.root.elements['time_limit'].value = Math.max(0,
-                        parseInt(this.root.elements['time_limit'].value, 10) - 30);
-                    update_time_limit();
-                }),
-                mk_button("+30s", ev => {
-                    this.root.elements['time_limit'].value = Math.min(999,
-                        parseInt(this.root.elements['time_limit'].value, 10) + 30);
-                    update_time_limit();
-                }),
-                mk_button("Max", ev => {
-                    this.root.elements['time_limit'].value = 999;
-                    update_time_limit();
-                }),
+            mk('dd.-with-buttons',
+                mk('div.-left',
+                    time_limit_input,
+                    " ",
+                    time_limit_output,
+                ),
+                mk('div.-right',
+                    mk_button("None", ev => {
+                        this.root.elements['time_limit'].value = 0;
+                        update_time_limit();
+                    }),
+                    mk_button("−30s", ev => {
+                        this.root.elements['time_limit'].value = Math.max(0,
+                            parseInt(this.root.elements['time_limit'].value, 10) - 30);
+                        update_time_limit();
+                    }),
+                    mk_button("+30s", ev => {
+                        this.root.elements['time_limit'].value = Math.min(999,
+                            parseInt(this.root.elements['time_limit'].value, 10) + 30);
+                        update_time_limit();
+                    }),
+                    mk_button("Max", ev => {
+                        this.root.elements['time_limit'].value = 999;
+                        update_time_limit();
+                    }),
+                ),
             ),
             mk('dt', "Size"),
-            mk('dd',
-                mk('input', {name: 'size_x', type: 'number', min: 10, max: 100, value: stored_level.size_x}),
-                " × ",
-                mk('input', {name: 'size_y', type: 'number', min: 10, max: 100, value: stored_level.size_y}),
-                mk('br'),
-                mk_button("10×10", ev => {
-                    this.root.elements['size_x'].value = 10;
-                    this.root.elements['size_y'].value = 10;
-                }),
-                mk_button("32×32", ev => {
-                    this.root.elements['size_x'].value = 32;
-                    this.root.elements['size_y'].value = 32;
-                }),
-                mk_button("100×100", ev => {
-                    this.root.elements['size_x'].value = 100;
-                    this.root.elements['size_y'].value = 100;
-                }),
+            mk('dd.-with-buttons',
+                mk('div.-left', make_size_input('size_x'), " × ", make_size_input('size_y')),
+                mk('div.-right', ...[10, 32, 50, 100].map(size =>
+                    mk_button(`${size}²`, ev => {
+                        this.root.elements['size_x'].value = size;
+                        this.root.elements['size_y'].value = size;
+                    }),
+                )),
             ),
             mk('dt', "Viewport"),
             mk('dd',
@@ -181,10 +204,11 @@ class EditorLevelMetaOverlay extends DialogOverlay {
                 stored_level.author = author;
             }
 
-            stored_level.time_limit = parseInt(els.time_limit.value, 10);
+            // FIXME gotta deal with NaNs here too, sigh, might just need a teeny tiny form library
+            stored_level.time_limit = Math.max(0, Math.min(65535, parseInt(els.time_limit.value, 10)));
 
-            let size_x = parseInt(els.size_x.value, 10);
-            let size_y = parseInt(els.size_y.value, 10);
+            let size_x = Math.max(1, Math.min(100, parseInt(els.size_x.value, 10)));
+            let size_y = Math.max(1, Math.min(100, parseInt(els.size_y.value, 10)));
             if (size_x !== stored_level.size_x || size_y !== stored_level.size_y) {
                 this.conductor.editor.resize_level(size_x, size_y);
             }
@@ -192,7 +216,11 @@ class EditorLevelMetaOverlay extends DialogOverlay {
             stored_level.blob_behavior = parseInt(els.blob_behavior.value, 10);
             stored_level.hide_logic = els.hide_logic.checked;
             stored_level.use_cc1_boots = els.use_cc1_boots.checked;
-            stored_level.viewport_size = parseInt(els.viewport.value, 10);
+            let viewport_size = parseInt(els.viewport.value, 10);
+            if (viewport_size !== 9 && viewport_size !== 10) {
+                viewport_size = 10;
+            }
+            stored_level.viewport_size = viewport_size;
             this.conductor.player.update_viewport_size();
 
             this.close();
@@ -513,86 +541,166 @@ class EditorShareOverlay extends DialogOverlay {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Mouse handling
+// Mouse tool handling
 
-// Stores and controls what the mouse is doing during a movement, mostly by dispatching to functions
-// defined for the individual tools
+// Handles mouse activity for a given tool, whether the mouse button is current held or not.  (When
+// the mouse button is /not/ held, then only tools bound to the left mouse button gets events.)
 const MOUSE_BUTTON_MASKS = [1, 4, 2];  // MouseEvent.button/buttons are ordered differently
 class MouseOperation {
-    constructor(editor, ev, target = null) {
+    constructor(editor, client_x, client_y, physical_button) {
         this.editor = editor;
-        this.target = target;
-        this.button_mask = MOUSE_BUTTON_MASKS[ev.button];
-        // Check .buttons instead of .button because Macs use ctrl-click to mean right click
-        this.alt_mode = !! (ev.buttons & 2);
-        this.modifier = null;  // or 'shift' or 'ctrl' (ctrl takes precedent)
-        this._update_modifier(ev);
+        this.is_held = false;
+        this.physical_button = physical_button;
+        this.alt_mode = physical_button !== 0;
+        this.ctrl = false;
+        this.shift = false;
+        //this._update_modifiers(ev);  // FIXME how do i get this initially??
 
-        // Client coordinates of the initial click
-        this.mx0 = ev.clientX;
-        this.my0 = ev.clientY;
-        // Real cell coordinates (i.e. including fractional position within a cell) of the click
-        [this.gx0f, this.gy0f] = this.editor.renderer.real_cell_coords_from_event(ev);
+        let [frac_cell_x, frac_cell_y] = this.editor.renderer.real_cell_coords_from_event({clientX: client_x, clientY: client_y});
+        let cell_x = Math.floor(frac_cell_x);
+        let cell_y = Math.floor(frac_cell_y);
+
+        // Client coordinates of the previous mouse event
+        this.prev_client_x = client_x;
+        this.prev_client_y = client_y;
         // Cell coordinates
-        this.gx0 = Math.floor(this.gx0f);
-        this.gy0 = Math.floor(this.gy0f);
+        this.prev_cell_x = cell_x;
+        this.prev_cell_y = cell_y;
+        // Fractional cell coordinates
+        this.prev_frac_cell_x = frac_cell_x;
+        this.prev_frac_cell_y = frac_cell_y;
 
-        // Same as above but for the previous mouse position
-        this.mx1 = this.mx0;
-        this.my1 = this.my0;
-        this.gx1f = this.gx0f;
-        this.gy1f = this.gy0f;
-        this.gx1 = this.gx0;
-        this.gy1 = this.gy0;
+        // Same as above, but for the most recent click (so drag ops know where they started)
+        this.click_client_x = null;
+        this.click_client_y = null;
+        this.click_cell_x = null;
+        this.click_cell_y = null;
+        this.click_frac_cell_x = null;
+        this.click_frac_cell_y = null;
 
-        this.start(ev);
+        // Start out with a hover effect
+        // FIXME no good, subclass hasn't finished setting itself up yet
+        //this.do_move({clientX: client_x, clientY: client_y});
     }
 
-    cell(gx, gy) {
-        return this.editor.cell(Math.floor(gx), Math.floor(gy));
+    cell(x, y) {
+        return this.editor.cell(Math.floor(x), Math.floor(y));
     }
 
-    do_mousemove(ev) {
-        let [gxf, gyf] = this.editor.renderer.real_cell_coords_from_event(ev);
-        let gx = Math.floor(gxf);
-        let gy = Math.floor(gyf);
-        this._update_modifier(ev);
+    do_press(ev) {
+        this.is_held = true;
+        this._update_modifiers(ev);
 
-        this.step(ev.clientX, ev.clientY, gxf, gyf, gx, gy);
+        this.client_x = ev.clientX;
+        this.client_y = ev.clientY;
+        [this.click_frac_cell_x, this.click_frac_cell_y] = this.editor.renderer.real_cell_coords_from_event(ev);
+        this.click_cell_x = Math.floor(this.click_frac_cell_x);
+        this.click_cell_y = Math.floor(this.click_frac_cell_y);
 
-        this.mx1 = ev.clientX;
-        this.my1 = ev.clientY;
-        this.gx1f = gxf;
-        this.gy1f = gyf;
-        this.gx1 = gx;
-        this.gy1 = gy;
+        this.prev_client_x = this.client_x;
+        this.prev_client_y = this.client_y;
+        this.prev_frac_cell_x = this.click_frac_cell_x;
+        this.prev_frac_cell_y = this.click_frac_cell_y;
+        this.prev_cell_x = this.click_cell_x;
+        this.prev_cell_y = this.click_cell_y;
+
+        this.handle_press(this.click_cell_x, this.click_cell_y, ev);
     }
 
-    _update_modifier(ev) {
-        if (ev.ctrlKey) {
-            this.modifier = 'ctrl';
+    do_move(ev) {
+        this._update_modifiers(ev);
+        let [frac_cell_x, frac_cell_y] = this.editor.renderer.real_cell_coords_from_event(ev);
+        let cell_x = Math.floor(frac_cell_x);
+        let cell_y = Math.floor(frac_cell_y);
+
+        if (this.is_held && (ev.buttons & MOUSE_BUTTON_MASKS[this.physical_button]) === 0) {
+            this.do_abort();
         }
-        else if (ev.shiftKey) {
-            this.modifier = 'shift';
+
+        if (this.is_held) {
+            // Continue a drag even if the mouse goes outside the viewport
+            this.handle_drag(ev.clientX, ev.clientY, frac_cell_x, frac_cell_y, cell_x, cell_y);
         }
         else {
-            this.modifier = null;
+            // This is a hover, which has separate behavior for losing track of the mouse.  Note
+            // that we can't just check if the cell coordinates are valid; we also need to know that
+            // the mouse is actually over the visible viewport (the canvas may have scrolled!)
+            let in_bounds = false;
+            if (this.editor.is_in_bounds(cell_x, cell_y)) {
+                let rect = this.editor.actual_viewport_el.getBoundingClientRect();
+                let cx = ev.clientX, cy = ev.clientY;
+                if (rect.left <= cx && cx < rect.right && rect.top <= cy && cy < rect.bottom) {
+                    in_bounds = true;
+                }
+            }
+
+            if (in_bounds) {
+                this.show();
+                this.handle_hover(ev.clientX, ev.clientY, frac_cell_x, frac_cell_y, cell_x, cell_y);
+            }
+            else {
+                this.hide();
+                this.handle_leave();
+            }
         }
+
+        this.prev_client_x = ev.clientX;
+        this.prev_client_y = ev.clientY;
+        this.prev_frac_cell_x = frac_cell_x;
+        this.prev_frac_cell_y = frac_cell_y;
+        this.prev_cell_x = cell_x;
+        this.prev_cell_y = cell_y;
+    }
+
+    do_leave() {
+        this.hide();
+    }
+
+    show() {
+        if (! this.is_hover_visible) {
+            this.is_hover_visible = true;
+            this.editor.preview_g.style.display = '';
+        }
+    }
+
+    hide() {
+        if (this.is_hover_visible) {
+            this.is_hover_visible = false;
+            this.editor.preview_g.style.display = 'none';
+        }
+    }
+
+    _update_modifiers(ev) {
+        this.ctrl = ev.ctrlKey;
+        this.shift = ev.shiftKey;
     }
 
     do_commit() {
-        this.commit();
-        this.cleanup();
+        if (! this.is_held)
+            return;
+
+        this.commit_press();
+        this.cleanup_press();
+        this.is_held = false;
     }
 
     do_abort() {
-        this.abort();
-        this.cleanup();
+        if (! this.is_held)
+            return;
+
+        this.abort_press();
+        this.cleanup_press();
+        this.is_held = false;
     }
 
-    *iter_touched_cells(gxf, gyf) {
+    do_destroy() {
+        this.do_abort();
+        this.cleanup_hover();
+    }
+
+    *iter_touched_cells(frac_cell_x, frac_cell_y) {
         for (let pt of walk_grid(
-            this.gx1f, this.gy1f, gxf, gyf,
+            this.prev_frac_cell_x, this.prev_frac_cell_y, frac_cell_x, frac_cell_y,
             // Bound the grid walk to one cell beyond the edges of the level, so that dragging the
             // mouse in from outside the actual edges still works reliably
             -1, -1, this.editor.stored_level.size_x, this.editor.stored_level.size_y))
@@ -603,65 +711,144 @@ class MouseOperation {
         }
     }
 
-    // Implement these
-    start() {}
-    step(x, y) {}
-    commit() {}
-    abort() {}
-    cleanup() {}
+    // -- Implement these --
+
+    // Called when the mouse button is first pressed
+    handle_press(x, y, ev) {}
+    // Called when the mouse is moved while the button is held down
+    handle_drag(client_x, client_y, frac_cell_x, frac_cell_y, cell_x, cell_y) {}
+    // Called when releasing the mouse button
+    commit_press() {}
+    // Called when aborting a held mouse, e.g. by pressing Esc or losing focus
+    abort_press() {}
+    // Called after either of the above cases
+    cleanup_press() {}
+
+    // Called when the mouse is moved while the button is NOT held down
+    handle_hover(client_x, client_y, frac_cell_x, frac_cell_y, cell_x, cell_y) {}
+    // Called when the foreground or background tile changes (after it's been redrawn)
+    handle_tile_updated(is_bg = false) {}
+    // Called when the mouse leaves the level or viewport while the button is NOT held down
+    handle_leave() {}
+    // Called when the hover ends??
+    cleanup_hover() {}
 }
 
 class PanOperation extends MouseOperation {
-    step(mx, my) {
+    handle_drag(client_x, client_y) {
         let target = this.editor.viewport_el.parentNode;
-        target.scrollLeft -= mx - this.mx1;
-        target.scrollTop -= my - this.my1;
+        target.scrollLeft -= client_x - this.prev_client_x;
+        target.scrollTop -= client_y - this.prev_client_y;
     }
 }
 
-class DrawOperation extends MouseOperation {
-}
-
-class PencilOperation extends DrawOperation {
-    start() {
-        this.handle_cell(this.gx0, this.gy0);
-    }
-    step(mx, my, gxf, gyf, gx, gy) {
-        if (this.modifier === 'ctrl') {
-            this.handle_cell(gx, gy);
-        }
-        else {
-            for (let [x, y] of this.iter_touched_cells(gxf, gyf)) {
-                this.handle_cell(x, y);
-            }
-        }
+class EyedropOperation extends MouseOperation {
+    constructor(...args) {
+        super(...args);
+        // Last coordinates we clicked on
+        // FIXME whoops, storing this state locally doesn't work since we're destroyed between
+        // clicks lol!  clean fix is to make an op immediately and persist it even when mouse isn't
+        // down?  then the hover stuff could be rolled into the tool too?  kind of a big change tho
+        // so for now let's cheat and hack it onto the editor itself
+        this.last_eyedropped_coords = null;
+        this.last_layer = null;
     }
 
-    handle_cell(x, y) {
-        if (this.modifier === 'ctrl') {
-            let cell = this.cell(x, y);
-            if (cell) {
-                // Pick the topmost thing
-                for (let layer = LAYERS.MAX - 1; layer >= 0; layer--) {
-                    if (cell[layer]) {
-                        this.editor.select_palette(cell[layer]);
-                        break;
-                    }
-                }
-            }
+    eyedrop(x, y) {
+        let cell = this.cell(x, y);
+        if (! cell) {
+            this.last_eyedropped_coords = null;
             return;
         }
 
-        let template = this.editor.palette_selection;
+        // If we're picking the background, we always use the terrain
+        if (this.ctrl) {
+            this.editor.select_background_tile(cell[LAYERS.terrain]);
+            return;
+        }
+
+        // Pick the topmost thing, unless we're clicking on a cell repeatedly, in which case we
+        // continue from below the last thing we picked
+        let layer_offset = 0;
+        if (this.last_eyedropped_coords &&
+            this.last_eyedropped_coords[0] === x && this.last_eyedropped_coords[1] === y)
+        {
+            layer_offset = this.last_layer;
+        }
+        for (let l = LAYERS.MAX - 1; l >= 0; l--) {
+            // This scheme means we'll cycle back around after hitting the bottom
+            let layer = (l + layer_offset) % LAYERS.MAX;
+            let tile = cell[layer];
+            if (! tile)
+                continue;
+
+            this.editor.select_foreground_tile(tile);
+            this.last_eyedropped_coords = [x, y];
+            this.last_layer = layer;
+            return;
+        }
+    }
+
+    handle_press(x, y) {
+        this.eyedrop(x, y);
+    }
+    handle_drag(x, y) {
+        // FIXME should only re-eyedrop if we enter a new cell or click again
+        this.eyedrop(x, y);
+    }
+}
+
+
+class PencilOperation extends MouseOperation {
+    constructor(...args) {
+        super(...args);
+
+        this.image = mk_svg('image', {
+            id: 'svg-editor-preview-tile',
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        });
+        this.editor.preview_g.append(this.image);
+        this.handle_tile_updated();
+    }
+
+    // Hover: draw the tile in the pointed-to cell
+    handle_tile_updated(is_bg = false) {
+        if (is_bg)
+            return;
+        this.image.setAttribute('href', this.editor.fg_tile_el.toDataURL());
+    }
+    handle_hover(_mx, _my, _cxf, _cyf, cell_x, cell_y) {
+        this.image.setAttribute('x', cell_x);
+        this.image.setAttribute('y', cell_y);
+    }
+    cleanup_hover() {
+        this.image.remove();
+    }
+
+    handle_press(x, y) {
+        this.draw_in_cell(x, y);
+    }
+    handle_drag(client_x, client_y, frac_cell_x, frac_cell_y, cell_x, cell_y) {
+        for (let [x, y] of this.iter_touched_cells(frac_cell_x, frac_cell_y)) {
+            this.draw_in_cell(x, y);
+        }
+    }
+
+    draw_in_cell(x, y) {
+        let template = this.editor.fg_tile;
         let cell = this.cell(x, y);
-        if (this.alt_mode) {
+        if (this.ctrl) {
             // Erase
-            if (this.modifier === 'shift') {
+            if (this.shift) {
+                // Wipe the whole cell
                 let new_cell = this.editor.make_blank_cell(x, y);
                 this.editor.replace_cell(cell, new_cell);
             }
             else if (template) {
-                // Erase whatever's on the same layer
+                // Erase whatever's on the same layer as the fg tile
                 this.editor.erase_tile(cell);
             }
         }
@@ -669,48 +856,218 @@ class PencilOperation extends DrawOperation {
             // Draw
             if (! template)
                 return;
-            if (this.modifier === 'shift') {
-                // Aggressive mode: erase whatever's already in the cell
+            if (this.shift) {
+                // Aggressive mode: replace whatever's already in the cell
                 let new_cell = this.editor.make_blank_cell(x, y);
                 new_cell[template.type.layer] = {...template};
                 this.editor.replace_cell(cell, new_cell);
             }
             else {
-                // Default operation: only erase whatever's on the same layer
+                // Default operation: only replace whatever's on the same layer
                 this.editor.place_in_cell(cell, template);
             }
         }
     }
 
-    cleanup() {
+    cleanup_press() {
         this.editor.commit_undo();
     }
 }
 
+// FIXME still to do on this:
+// - doesn't know to update canvas size or erase results when a new level is loaded OR when the
+// level size changes (and for that matter the selection tool doesn't either)
+// - hold shift to replace all of the same tile in the whole level?  (need to know when shift is
+// toggled)
+// - right-click to pick, same logic as pencil (which needs improving)
+// - ctrl-click to erase
+// - reset the preview after a fill?  is that ever necessary?
+class FillOperation extends MouseOperation {
+    constructor(...args) {
+        super(...args);
+        let renderer = this.editor.renderer;
+        this.canvas = mk('canvas', {
+            width: renderer.canvas.width,
+            height: renderer.canvas.height,
+        });
+        this.foreign_object = mk_svg('foreignObject', {
+            x: 0, y: 0,
+            width: this.canvas.width, height: this.canvas.height,
+            transform: `scale(${1/renderer.tileset.size_x} ${1/renderer.tileset.size_y})`,
+        }, this.canvas);
+        this.editor.preview_g.append(this.foreign_object);
+
+        // array of (true: in flood, false: definitely not), or null if not yet populated
+        this.fill_state = null;
+        // Last coordinates we updated from
+        // FIXME probably not necessary now?
+        this.last_known_coords = null;
+        // Palette tile we last flooded with
+        this.last_known_tile = this.editor.fg_tile;
+    }
+
+    handle_hover(_mx, _my, _gxf, _gyf, cell_x, cell_y) {
+        this.last_known_coords = [cell_x, cell_y];
+        this.last_known_tile = this.editor.fg_tile;
+        this._floodfill_from(cell_x, cell_y);
+    }
+    _floodfill_from(x0, y0) {
+        let i0 = this.editor.stored_level.coords_to_scalar(x0, y0);
+        if (this.fill_state && this.fill_state[i0]) {
+            // This cell is already part of the pending fill, so there's nothing to do
+            return;
+        }
+
+        let stored_level = this.editor.stored_level;
+        let tile = this.editor.fg_tile;
+        let layer = tile.type.layer;
+        let tile0 = stored_level.linear_cells[i0][layer] ?? null;
+        let type0 = tile0 ? tile0.type : null;
+
+        if (! this.editor.selection.contains(x0, y0)) {
+            this.fill_state = null;
+            this._redraw();
+            return;
+        }
+
+        // Aaand, floodfill
+        this.fill_state = new Array(stored_level.linear_cells.length);
+        this.fill_state[i0] = true;
+        let pending = [i0];
+        let steps = 0;
+        while (pending.length > 0) {
+            let old_pending = pending;
+            pending = [];
+            for (let i of old_pending) {
+                let [x, y] = stored_level.scalar_to_coords(i);
+
+                // Check neighbors
+                for (let dirinfo of Object.values(DIRECTIONS)) {
+                    let [dx, dy] = dirinfo.movement;
+                    let nx = x + dx;
+                    let ny = y + dy;
+                    let j = stored_level.coords_to_scalar(nx, ny)
+                    if (! this.editor.selection.contains(nx, ny)) {
+                        this.fill_state[j] = false;
+                        continue;
+                    }
+
+                    let cell = this.editor.cell(nx, ny);
+                    if (cell) {
+                        if (this.fill_state[j] !== undefined)
+                            continue;
+
+                        let tile = cell[layer] ?? null;
+                        let type = tile ? tile.type : null;
+                        if (type === type0) {
+                            this.fill_state[j] = true;
+                            pending.push(j);
+                        }
+                        else {
+                            this.fill_state[j] = false;
+                        }
+                    }
+                }
+                steps++;
+                if (steps > 10000) {
+                    console.error("more steps than should be possible");
+                    return;
+                }
+            }
+        }
+
+        this._redraw();
+    }
+
+    _redraw() {
+        // Draw all the good tiles
+        let ctx = this.canvas.getContext('2d');
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        if (! this.fill_state)
+            return;
+
+        let stored_level = this.editor.stored_level;
+        let tileset = this.editor.renderer.tileset;
+        let source = this.editor.fg_tile_el;
+        for (let [i, ok] of this.fill_state.entries()) {
+            if (! ok)
+                continue;
+
+            let [x, y] = stored_level.scalar_to_coords(i);
+            ctx.drawImage(source, x * tileset.size_x, y * tileset.size_y);
+        }
+    }
+
+    handle_tile_updated(is_bg = false) {
+        if (is_bg)
+            // TODO
+            return;
+
+        // Figure out whether the floodfill results changed.  If the new tile is on the same layer
+        // as the old tile, we can reuse the results and just redraw.  If not, recompute everything
+        // (unless we're hidden, in which case blow it away and just do nothing).
+        if (this.editor.fg_tile.type.layer === this.last_known_tile.type.layer) {
+            if (this.fill_state) {
+                this._redraw();
+            }
+        }
+        else {
+            this.fill_state = null;
+            if (this.last_known_coords && ! this.hidden) {
+                this._floodfill_from(...this.last_known_coords);
+            }
+        }
+    }
+
+    cleanup_hover() {
+        this.foreign_object.remove();
+    }
+
+    handle_press(x, y) {
+        // Filling is a single-click thing, and all the work was done while hovering
+        if (! this.fill_state) {
+            // Something has gone terribly awry (or they clicked outside the level)
+            return;
+        }
+
+        let stored_level = this.editor.stored_level;
+        let template = this.editor.fg_tile;
+        for (let [i, ok] of this.fill_state.entries()) {
+            if (! ok)
+                continue;
+
+            let cell = this.editor.cell(...stored_level.scalar_to_coords(i));
+            this.editor.place_in_cell(cell, template);
+        }
+        this.editor.commit_undo();
+    }
+}
+
+
 // TODO also, delete
 // TODO also, non-rectangular selections
 // TODO also, better marching ants, hard to see on gravel
-// TODO press esc to cancel pending selection
 class SelectOperation extends MouseOperation {
-    start() {
-        if (! this.editor.selection.is_empty && this.editor.selection.contains(this.gx0, this.gy0)) {
+    handle_press(x, y) {
+        if (! this.editor.selection.is_empty && this.editor.selection.contains(this.click_cell_x, this.click_cell_y)) {
             // Move existing selection
             this.mode = 'float';
-            if (this.modifier === 'ctrl') {
+            if (this.ctrl) {
                 this.make_copy = true;
             }
         }
         else {
             // Create new selection
+            this.mode = 'create';
             this.pending_selection = this.editor.selection.create_pending();
             this.update_pending_selection();
         }
         this.has_moved = false;
     }
-    step(mx, my, gxf, gyf, gx, gy) {
+    handle_drag(client_x, client_y, frac_cell_x, frac_cell_y, cell_x, cell_y) {
         if (this.mode === 'float') {
             if (this.has_moved) {
-                this.editor.selection.move_by(Math.floor(gx - this.gx1), Math.floor(gy - this.gy1));
+                this.editor.selection.move_by(Math.floor(cell_x - this.prev_cell_x), Math.floor(cell_y - this.prev_cell_y));
                 return;
             }
 
@@ -734,14 +1091,14 @@ class SelectOperation extends MouseOperation {
     }
 
     update_pending_selection() {
-        this.pending_selection.set_extrema(this.gx0, this.gy0, this.gx1, this.gy1);
+        this.pending_selection.set_extrema(this.click_cell_x, this.click_cell_y, this.prev_cell_x, this.prev_cell_y);
     }
 
-    commit() {
+    commit_press() {
         if (this.mode === 'float') {
             // Make selection move undoable
-            let dx = Math.floor(this.gx1 - this.gx0);
-            let dy = Math.floor(this.gy1 - this.gy0);
+            let dx = Math.floor(this.prev_cell_x - this.click_cell_x);
+            let dy = Math.floor(this.prev_cell_y - this.click_cell_y);
             if (dx || dy) {
                 this.editor._done(
                     () => this.editor.selection.move_by(dx, dy),
@@ -764,7 +1121,7 @@ class SelectOperation extends MouseOperation {
         }
         this.editor.commit_undo();
     }
-    abort() {
+    abort_press() {
         if (this.mode === 'float') {
             // FIXME revert the move?
         }
@@ -774,19 +1131,19 @@ class SelectOperation extends MouseOperation {
     }
 }
 
-class ForceFloorOperation extends DrawOperation {
-    start() {
+class ForceFloorOperation extends MouseOperation {
+    handle_press(x, y) {
         // Begin by placing an all-way force floor under the mouse
-        this.editor.place_in_cell(this.cell(this.gx0, this.gy0), {type: TILE_TYPES.force_floor_all});
+        this.editor.place_in_cell(this.cell(x, y), {type: TILE_TYPES.force_floor_all});
     }
-    step(mx, my, gxf, gyf) {
+    handle_drag(client_x, client_y, frac_cell_x, frac_cell_y) {
         // Walk the mouse movement and change each we touch to match the direction we
         // crossed the border
         // FIXME occasionally i draw a tetris S kinda shape and both middle parts point
         // the same direction, but shouldn't
         let i = 0;
         let prevx, prevy;
-        for (let [x, y] of this.iter_touched_cells(gxf, gyf)) {
+        for (let [x, y] of this.iter_touched_cells(frac_cell_x, frac_cell_y)) {
             i++;
             // The very first cell is the one the mouse was already in, and we don't
             // have a movement direction yet, so leave that alone
@@ -836,7 +1193,7 @@ class ForceFloorOperation extends DrawOperation {
             prevy = y;
         }
     }
-    cleanup() {
+    cleanup_press() {
         this.editor.commit_undo();
     }
 }
@@ -846,16 +1203,16 @@ class ForceFloorOperation extends DrawOperation {
 // fix it if it wasn't there?
 // TODO gonna need an ice tool too, so maybe i can merge all three with some base thing that tracks
 // the directions the mouse is moving?  or is FF tool too different?
-class TrackOperation extends DrawOperation {
-    start() {
+class TrackOperation extends MouseOperation {
+    handle_press(x, y) {
         // Do nothing to start; we only lay track when the mouse leaves a cell
         this.entry_direction = null;
     }
-    step(mx, my, gxf, gyf) {
+    handle_drag(client_x, client_y, frac_cell_x, frac_cell_y) {
         // Walk the mouse movement and, for every tile we LEAVE, add a railroad track matching the
         // two edges of it that we crossed.
         let prevx = null, prevy = null;
-        for (let [x, y] of this.iter_touched_cells(gxf, gyf)) {
+        for (let [x, y] of this.iter_touched_cells(frac_cell_x, frac_cell_y)) {
             if (prevx === null || prevy === null) {
                 prevx = x;
                 prevy = y;
@@ -905,7 +1262,7 @@ class TrackOperation extends DrawOperation {
             let terrain = cell[0];
             if (terrain.type.name === 'railroad') {
                 let new_terrain = {...terrain};
-                if (this.alt_mode) {
+                if (this.ctrl) {
                     // Erase
                     // TODO fix track switch?
                     // TODO if this leaves tracks === 0, replace with floor?
@@ -917,7 +1274,7 @@ class TrackOperation extends DrawOperation {
                 }
                 this.editor.place_in_cell(cell, new_terrain);
             }
-            else if (! this.alt_mode) {
+            else if (! this.ctrl) {
                 terrain = { type: TILE_TYPES['railroad'] };
                 terrain.type.populate_defaults(terrain);
                 terrain.tracks |= bit;
@@ -929,23 +1286,24 @@ class TrackOperation extends DrawOperation {
             this.entry_direction = DIRECTIONS[exit_direction].opposite;
         }
     }
-    cleanup() {
+    cleanup_press() {
         this.editor.commit_undo();
     }
 }
 
-class WireOperation extends DrawOperation {
-    start() {
-        if (this.modifier === 'ctrl') {
+class WireOperation extends MouseOperation {
+    handle_press(x, y) {
+        if (this.alt_mode) {
             // Place or remove wire tunnels
-            let cell = this.cell(this.gx0f, this.gy0f);
+            // TODO this could just be a separate tool now
+            let cell = this.cell(this.click_frac_cell_x, this.click_frac_cell_y);
             if (! cell)
                 return;
 
             let direction;
             // Use the offset from the center to figure out which edge of the tile to affect
-            let xoff = this.gx0f % 1 - 0.5;
-            let yoff = this.gy0f % 1 - 0.5;
+            let xoff = this.click_frac_cell_x % 1 - 0.5;
+            let yoff = this.click_frac_cell_y % 1 - 0.5;
             if (Math.abs(xoff) > Math.abs(yoff)) {
                 if (xoff > 0) {
                     direction = 'east';
@@ -967,7 +1325,9 @@ class WireOperation extends DrawOperation {
             let terrain = cell[LAYERS.terrain];
             if (terrain.type.name === 'floor') {
                 terrain = {...terrain};
-                if (this.alt_mode) {
+                // TODO if this ever supports drag, remember whether we're adding or removing
+                // initially
+                if (terrain.wire_tunnel_directions & bit) {
                     terrain.wire_tunnel_directions &= ~bit;
                 }
                 else {
@@ -978,8 +1338,8 @@ class WireOperation extends DrawOperation {
             }
         }
     }
-    step(mx, my, gxf, gyf) {
-        if (this.modifier === 'ctrl') {
+    handle_drag(client_x, client_y, frac_cell_x, frac_cell_y) {
+        if (this.alt_mode) {
             // Wire tunnels don't support dragging
             // TODO but maybe they should??  makes erasing a lot of them easier at least
             return;
@@ -1003,7 +1363,7 @@ class WireOperation extends DrawOperation {
         // TODO maybe i should just have a walk_grid variant that yields line crossings, christ
         let prevqx = null, prevqy = null;
         for (let [qx, qy] of walk_grid(
-            this.gx1f * 4, this.gy1f * 4, gxf * 4, gyf * 4,
+            this.prev_frac_cell_x * 4, this.prev_frac_cell_y * 4, frac_cell_x * 4, frac_cell_y * 4,
             // See comment in iter_touched_cells
             -1, -1, this.editor.stored_level.size_x * 4, this.editor.stored_level.size_y * 4))
         {
@@ -1081,12 +1441,12 @@ class WireOperation extends DrawOperation {
                 // TODO probably a better way to do this
                 if (! tile)
                     continue;
-                if (['floor', 'steel', 'button_pink', 'button_black', 'teleport_blue', 'teleport_red', 'light_switch_on', 'light_switch_off', 'circuit_block', 'teleport_blue_exit', 'turntable_cw', 'turntable_ccw'].indexOf(tile.type.name) < 0)
+                if (! tile.type.contains_wire)
                     continue;
 
                 tile = {...tile};
                 tile.wire_directions = tile.wire_directions ?? 0;
-                if (this.alt_mode) {
+                if (this.ctrl) {
                     // Erase
                     tile.wire_directions &= ~DIRECTIONS[wire_direction].bit;
                 }
@@ -1102,7 +1462,7 @@ class WireOperation extends DrawOperation {
             prevqy = qy;
         }
     }
-    cleanup() {
+    cleanup_press() {
         this.editor.commit_undo();
     }
 }
@@ -1144,9 +1504,9 @@ const ADJUST_TOGGLES_CCW = {};
     }
 }
 class AdjustOperation extends MouseOperation {
-    start() {
-        let cell = this.cell(this.gx1, this.gy1);
-        if (this.modifier === 'ctrl') {
+    handle_press(x, y) {
+        let cell = this.cell(this.prev_cell_x, this.prev_cell_y);
+        if (this.ctrl) {
             for (let tile of cell) {
                 if (tile && TILES_WITH_PROPS[tile.type.name] !== undefined) {
                     this.editor.open_tile_prop_overlay(
@@ -1156,8 +1516,8 @@ class AdjustOperation extends MouseOperation {
             }
             return;
         }
-        // FIXME implement shift to always target floor, or maybe start from bottom
-        for (let layer = LAYERS.MAX - 1; layer >= 0; layer--) {
+        let start_layer = this.shift ? 0 : LAYERS.MAX - 1;
+        for (let layer = start_layer; layer >= 0; layer--) {
             let tile = cell[layer];
             if (! tile)
                 continue;
@@ -1196,7 +1556,7 @@ class AdjustOperation extends MouseOperation {
 // FIXME undo
 // TODO view is not especially visible
 class CameraOperation extends MouseOperation {
-    start(ev) {
+    handle_press(x, y, ev) {
         this.offset_x = 0;
         this.offset_y = 0;
         this.resize_x = 0;
@@ -1209,9 +1569,9 @@ class CameraOperation extends MouseOperation {
             // Clicking in empty space creates a new camera region
             this.mode = 'create';
             cursor = 'move';
-            this.region = new DOMRect(this.gx0, this.gy0, 1, 1);
+            this.region = new DOMRect(this.click_cell_x, this.click_cell_y, 1, 1);
             this.target = mk_svg('rect.overlay-camera', {
-                x: this.gx0, y: this.gy1, width: 1, height: 1,
+                x: this.click_cell_x, y: this.prev_cell_y, width: 1, height: 1,
                 'data-region-index': this.editor.stored_level.camera_regions.length,
             });
             this.editor.connections_g.append(this.target);
@@ -1221,10 +1581,10 @@ class CameraOperation extends MouseOperation {
 
             // If we're grabbing an edge, resize it
             let rect = this.target.getBoundingClientRect();
-            let grab_left = (this.mx0 < rect.left + 16);
-            let grab_right = (this.mx0 > rect.right - 16);
-            let grab_top = (this.my0 < rect.top + 16);
-            let grab_bottom = (this.my0 > rect.bottom - 16);
+            let grab_left = (this.click_client_x < rect.left + 16);
+            let grab_right = (this.click_client_x > rect.right - 16);
+            let grab_top = (this.click_client_y < rect.top + 16);
+            let grab_bottom = (this.click_client_y > rect.bottom - 16);
             if (grab_left || grab_right || grab_top || grab_bottom) {
                 this.mode = 'resize';
 
@@ -1282,18 +1642,18 @@ class CameraOperation extends MouseOperation {
         this.size_text.setAttribute('y', this.region.y + this.offset_y + (this.region.height + this.resize_y) / 2);
         this.size_text.textContent = `${this.region.width + this.resize_x} × ${this.region.height + this.resize_y}`;
     }
-    step(mx, my, gxf, gyf, gx, gy) {
-        // FIXME not right if we zoom, should use gxf
-        let dx = Math.floor((mx - this.mx0) / this.editor.renderer.tileset.size_x + 0.5);
-        let dy = Math.floor((my - this.my0) / this.editor.renderer.tileset.size_y + 0.5);
+    handle_drag(client_x, client_y, frac_cell_x, frac_cell_y, cell_x, cell_y) {
+        // FIXME not right if we zoom, should use frac_cell_x
+        let dx = Math.floor((client_x - this.click_client_x) / this.editor.renderer.tileset.size_x + 0.5);
+        let dy = Math.floor((client_y - this.click_client_y) / this.editor.renderer.tileset.size_y + 0.5);
 
         let stored_level = this.editor.stored_level;
         if (this.mode === 'create') {
             // Just make the new region span between the original click and the new position
-            this.region.x = Math.min(gx, this.gx0);
-            this.region.y = Math.min(gy, this.gy0);
-            this.region.width = Math.max(gx, this.gx0) + 1 - this.region.x;
-            this.region.height = Math.max(gy, this.gy0) + 1 - this.region.y;
+            this.region.x = Math.min(cell_x, this.click_cell_x);
+            this.region.y = Math.min(cell_y, this.click_cell_y);
+            this.region.width = Math.max(cell_x, this.click_cell_x) + 1 - this.region.x;
+            this.region.height = Math.max(cell_y, this.click_cell_y) + 1 - this.region.y;
         }
         else if (this.mode === 'move') {
             // Keep it within the map!
@@ -1335,7 +1695,7 @@ class CameraOperation extends MouseOperation {
         this.target.setAttribute('height', this.region.height + this.resize_y);
         this._update_size_text();
     }
-    commit() {
+    commit_press() {
         if (this.mode === 'create') {
             // Region is already updated, just add it to the level
             this.editor.stored_level.camera_regions.push(this.region);
@@ -1348,7 +1708,7 @@ class CameraOperation extends MouseOperation {
             this.region.height += this.resize_y;
         }
     }
-    abort() {
+    abort_press() {
         if (this.mode === 'create') {
             // The element was fake, so delete it
             this.target.remove();
@@ -1361,14 +1721,14 @@ class CameraOperation extends MouseOperation {
             this.target.setAttribute('height', this.region.height);
         }
     }
-    cleanup() {
+    cleanup_press() {
         this.editor.viewport_el.style.cursor = '';
         this.size_text.remove();
     }
 }
 
 class CameraEraseOperation extends MouseOperation {
-    start(ev) {
+    handle_press(x, y, ev) {
         let target = ev.target.closest('.overlay-camera');
         if (target) {
             let index = parseInt(target.getAttribute('data-region-index'), 10);
@@ -1382,11 +1742,11 @@ const EDITOR_TOOLS = {
     pencil: {
         icon: 'icons/tool-pencil.png',
         name: "Pencil",
-        desc: "Place, erase, and select tiles.\nLeft click: draw\nRight click: erase\nShift: Replace all layers\nCtrl-click: eyedrop",
+        desc: "Place, erase, and select tiles.\nLeft click: draw\nCtrl: erase\nShift: replace all layers\nRight click: pick foreground tile\nCtrl-right click: pick background tile",
         uses_palette: true,
         op1: PencilOperation,
-        op2: PencilOperation,
-        //hover: show current selection under cursor
+        op2: EyedropOperation,
+        shortcut: 'b',
     },
     line: {
         // TODO not implemented
@@ -1394,6 +1754,7 @@ const EDITOR_TOOLS = {
         name: "Line",
         desc: "Draw straight lines",
         uses_palette: true,
+        shortcut: 'l',
     },
     box: {
         // TODO not implemented
@@ -1401,19 +1762,24 @@ const EDITOR_TOOLS = {
         name: "Box",
         desc: "Fill a rectangular area with tiles",
         uses_palette: true,
+        shortcut: 'u',
     },
     fill: {
-        // TODO not implemented
         icon: 'icons/tool-fill.png',
         name: "Fill",
         desc: "Flood-fill an area with tiles",
         uses_palette: true,
+        op1: FillOperation,
+        op2: EyedropOperation,
+        shortcut: 'g',
     },
     select_box: {
         icon: 'icons/tool-select-box.png',
         name: "Box select",
         desc: "Select and manipulate rectangles.",
+        affects_selection: true,
         op1: SelectOperation,
+        shortcut: 'm',
     },
     'force-floors': {
         icon: 'icons/tool-force-floors.png',
@@ -1424,7 +1790,7 @@ const EDITOR_TOOLS = {
     tracks: {
         icon: 'icons/tool-tracks.png',
         name: "Tracks",
-        desc: "Draw tracks following the cursor.\nLeft click: Lay tracks\nRight click: Erase tracks\nCtrl-click: Toggle track switch",
+        desc: "Draw tracks following the cursor.\nLeft click: Lay tracks\nCtrl-click: Erase tracks\nRight click: Toggle track switch",
         op1: TrackOperation,
         op2: TrackOperation,
     },
@@ -1434,6 +1800,7 @@ const EDITOR_TOOLS = {
         desc: "Edit existing tiles.\nLeft click: rotate actor or toggle terrain\nRight click: rotate or toggle in reverse\nShift: always target terrain\nCtrl-click: edit properties of complex tiles\n(wires, railroads, hints, etc.)",
         op1: AdjustOperation,
         op2: AdjustOperation,
+        shortcut: 'a',
     },
     connect: {
         // TODO not implemented
@@ -1445,7 +1812,7 @@ const EDITOR_TOOLS = {
         // TODO not implemented
         icon: 'icons/tool-wire.png',
         name: "Wire",
-        desc: "Edit CC2 wiring.\nLeft click: draw wires\nRight click: erase wires\nCtrl-click: toggle tunnels (floor only)",
+        desc: "Edit CC2 wiring.\nLeft click: draw wires\nCtrl-click: erase wires\nRight click: toggle tunnels (floor only)",
         op1: WireOperation,
         op2: WireOperation,
     },
@@ -1462,7 +1829,13 @@ const EDITOR_TOOLS = {
     // slade when you have some selected?
     // TODO ah, railroads...
 };
-const EDITOR_TOOL_ORDER = ['pencil', 'select_box', 'adjust', 'force-floors', 'tracks', 'wire', 'camera'];
+const EDITOR_TOOL_ORDER = ['pencil', 'select_box', 'fill', 'adjust', 'force-floors', 'tracks', 'wire', 'camera'];
+const EDITOR_TOOL_SHORTCUTS = {};
+for (let [tool, tooldef] of Object.entries(EDITOR_TOOLS)) {
+    if (tooldef.shortcut) {
+        EDITOR_TOOL_SHORTCUTS[tooldef.shortcut] = tool;
+    }
+}
 
 // TODO this MUST use a LL tileset!
 const EDITOR_PALETTE = [{
@@ -1504,7 +1877,7 @@ const EDITOR_PALETTE = [{
 
         'water', 'turtle', 'fire',
         'ice', 'ice_nw',
-        'force_floor_n', 'force_floor_all',
+        'force_floor_s', 'force_floor_all',
         'canopy',
     ],
 }, {
@@ -1634,6 +2007,7 @@ const EDITOR_PALETTE = [{
         'sokoban_block/yellow',
         'sokoban_button/yellow',
         'sokoban_wall/yellow',
+		'one_way_walls/south',
         'cloud',
         'cloud_player',
         'cloud_block',
@@ -2366,6 +2740,7 @@ const SPECIAL_PALETTE_ENTRIES = {
     'sokoban_block/green':  { name: 'sokoban_block', color: 'green' },
     'sokoban_button/green': { name: 'sokoban_button', color: 'green' },
     'sokoban_wall/green':   { name: 'sokoban_wall', color: 'green' },
+    'one_way_walls/south':  { name: 'one_way_walls', edges: DIRECTIONS['south'].bit },
 };
 const _RAILROAD_ROTATED_LEFT = [3, 0, 1, 2, 5, 4];
 const _RAILROAD_ROTATED_RIGHT = [1, 2, 3, 0, 5, 4];
@@ -2597,6 +2972,15 @@ const SPECIAL_PALETTE_BEHAVIOR = {
             return 'sokoban_wall/' + (tile.color ?? 'red');
         },
     },
+    one_way_walls: {
+        pick_palette_entry(tile) {
+            return 'one_way_walls/south';
+        },
+    },
+};
+SPECIAL_PALETTE_BEHAVIOR['one_way_walls'] = {
+    ...SPECIAL_PALETTE_BEHAVIOR['thin_walls'],
+    ...SPECIAL_PALETTE_BEHAVIOR['one_way_walls'],
 };
 // Fill in some special behavior that boils down to rotating tiles which happen to be encoded as
 // different tile types
@@ -2875,6 +3259,9 @@ export class Editor extends PrimaryView {
     constructor(conductor) {
         super(conductor, document.body.querySelector('main#editor'));
 
+        // FIXME possibly rename these lol, adding that scroll container made "viewport" a bit
+        // inappropriate
+        this.actual_viewport_el = this.root.querySelector('.editor-canvas');
         this.viewport_el = this.root.querySelector('.editor-canvas .-container');
 
         // Load editor state; we may need this before setup() since we create new levels before
@@ -2895,81 +3282,158 @@ export class Editor extends PrimaryView {
         // FIXME don't hardcode size here, convey this to renderer some other way
         this.renderer = new CanvasRenderer(this.conductor.tilesets['ll'], 32);
         this.renderer.perception = 'editor';
+        this.renderer.show_facing = true;
 
         // FIXME need this in load_level which is called even if we haven't been setup yet
         this.connections_g = mk_svg('g');
         // This SVG draws vectors on top of the editor, like monster paths and button connections
         this.svg_overlay = mk_svg('svg.level-editor-overlay', {viewBox: '0 0 32 32'}, this.connections_g);
         this.viewport_el.append(this.renderer.canvas, this.svg_overlay);
+
+        // This is done more correctly in setup(), but we need a sensible default so levels can be
+        // created before switching to the editor
+        this.bg_tile = {type: TILE_TYPES.floor};
     }
 
     setup() {
         // Add more bits to SVG overlay
+        this.preview_g = mk_svg('g', {opacity: 0.5});
         this.svg_cursor = mk_svg('rect.overlay-transient.overlay-cursor', {x: 0, y: 0, width: 1, height: 1});
-        this.svg_overlay.append(this.svg_cursor);
+        this.svg_overlay.append(this.preview_g, this.svg_cursor);
 
         // Keyboard shortcuts
         window.addEventListener('keydown', ev => {
             if (! this.active)
                 return;
 
-            if (ev.key === ',') {
-                if (ev.shiftKey) {
-                    this.rotate_palette_left();
+            if (ev.ctrlKey) {
+                if (ev.key === 'a') {
+                    // Select all
+                    if (EDITOR_TOOLS[this.current_tool].affects_selection) {
+                        // If we're in the middle of using a selection tool, cancel it
+                        this.cancel_mouse_drag();
+                    }
+                    let new_rect = new DOMRect(0, 0, this.stored_level.size_x, this.stored_level.size_y);
+                    let old_rect = this.selection.rect;
+                    if (! (old_rect && old_rect.x === new_rect.x && old_rect.y === new_rect.y && old_rect.width === new_rect.width && old_rect.height === new_rect.height)) {
+                        this.selection.set_from_rect(new_rect);
+                        this.commit_undo();
+                    }
                 }
-                else if (this.palette_selection) {
-                    this.rotate_tile_left(this.palette_selection);
-                    this.redraw_palette_selection();
+                else if (ev.key === 'A') {
+                    // Deselect
+                    if (EDITOR_TOOLS[this.current_tool].affects_selection) {
+                        // If we're in the middle of using a selection tool, cancel it
+                        this.cancel_mouse_drag();
+                    }
+                    if (! this.selection.is_empty) {
+                        this.selection.defloat();
+                        this.selection.clear();
+                        this.commit_undo();
+                    }
+                }
+                else if (ev.key === 'z') {
+                    this.undo();
+                }
+                else if (ev.key === 'Z' || ev.key === 'y') {
+                    this.redo();
+                }
+                else {
+                    return;
                 }
             }
-            else if (ev.key === '.') {
-                if (ev.shiftKey) {
-                    this.rotate_palette_right();
+            else {
+                if (ev.key === 'Escape') {
+                    if (this.mouse_op && this.mouse_op.is_held) {
+                        this.mouse_op.do_abort();
+                    }
                 }
-                else if (this.palette_selection) {
-                    this.rotate_tile_right(this.palette_selection);
-                    this.redraw_palette_selection();
+                else if (ev.key === ',') {
+                    if (ev.shiftKey) {
+                        this.rotate_palette_left();
+                    }
+                    else if (this.fg_tile) {
+                        this.rotate_tile_left(this.fg_tile);
+                        this.redraw_foreground_tile();
+                    }
+                }
+                else if (ev.key === '.') {
+                    if (ev.shiftKey) {
+                        this.rotate_palette_right();
+                    }
+                    else if (this.fg_tile) {
+                        this.rotate_tile_right(this.fg_tile);
+                        this.redraw_foreground_tile();
+                    }
+                }
+                else if (EDITOR_TOOL_SHORTCUTS[ev.key]) {
+                    this.select_tool(EDITOR_TOOL_SHORTCUTS[ev.key]);
+                }
+                else {
+                    return;
                 }
             }
+
+            // If we got here, we did something with the key
+            ev.stopPropagation();
+            ev.preventDefault();
         });
+
         // Level canvas and mouse handling
+        this.mouse_coords = null;
         this.mouse_op = null;
         this.viewport_el.addEventListener('mousedown', ev => {
-            this.cancel_mouse_operation();
+            this.mouse_coords = [ev.clientX, ev.clientY];
+            this.cancel_mouse_drag();
 
-            if (ev.button === 0) {
+            let button = ev.button;
+            // Macs also use ctrl-left-click to emulate right-click, even though everyone has a
+            // two-button mouse, and that messes with us since we want to use ctrl as a modifier.
+            // Defeat it by manually checking for the right button bit in ev.buttons
+            if (button === 2 && (ev.buttons & 2) === 0) {
+                button = 0;
+            }
+
+            let op_type = null;
+            if (button === 0) {
                 // Left button: activate tool
-                let op_type = EDITOR_TOOLS[this.current_tool].op1;
-                if (! op_type)
-                    return;
-
-                this.mouse_op = new op_type(this, ev);
-                ev.preventDefault();
-                ev.stopPropagation();
+                op_type = EDITOR_TOOLS[this.current_tool].op1;
             }
-            else if (ev.button === 1) {
+            else if (button === 1) {
                 // Middle button: always pan
-                this.mouse_op = new PanOperation(this, ev);
-
-                ev.preventDefault();
-                ev.stopPropagation();
+                op_type = PanOperation;
+                // TODO how should this impact the hover?
             }
-            else if (ev.button === 2) {
+            else if (button === 2) {
                 // Right button: activate tool's alt mode
-                let op_type = EDITOR_TOOLS[this.current_tool].op2;
-                if (! op_type)
-                    return;
-
-                this.mouse_op = new op_type(this, ev);
-                ev.preventDefault();
-                ev.stopPropagation();
+                op_type = EDITOR_TOOLS[this.current_tool].op2;
             }
+
+            if (! op_type)
+                return;
+
+            if (this.mouse_op && this.mouse_op instanceof op_type &&
+                this.mouse_op.physical_button === button)
+            {
+                // Don't replace with the same operation!
+            }
+            else {
+                if (this.mouse_op) {
+                    this.mouse_op.do_destroy();
+                }
+                this.mouse_op = new op_type(this, ev.clientX, ev.clientY, ev.button, button);
+            }
+            this.mouse_op.do_press(ev);
+
+            ev.preventDefault();
+            ev.stopPropagation();
         });
-        // Once the mouse is down, we should accept mouse movement anywhere
         window.addEventListener('mousemove', ev => {
             if (! this.active)
                 return;
 
+            this.mouse_coords = [ev.clientX, ev.clientY];
+            // TODO move this into MouseOperation
             let [x, y] = this.renderer.cell_coords_from_event(ev);
             if (this.is_in_bounds(x, y)) {
                 this.svg_cursor.classList.add('--visible');
@@ -2982,20 +3446,25 @@ export class Editor extends PrimaryView {
 
             if (! this.mouse_op)
                 return;
-            if ((ev.buttons & this.mouse_op.button_mask) === 0) {
-                this.cancel_mouse_operation();
-                return;
-            }
-
-            this.mouse_op.do_mousemove(ev);
+            this.mouse_op.do_move(ev);
         });
+        this.actual_viewport_el.addEventListener('mouseleave', ev => {
+            if (this.mouse_op) {
+                this.mouse_op.do_leave();
+            }
+        })
         // TODO should this happen for a mouseup anywhere?
         this.viewport_el.addEventListener('mouseup', ev => {
-            if (this.mouse_op) {
-                this.mouse_op.do_commit();
-                this.mouse_op = null;
-                ev.stopPropagation();
-                ev.preventDefault();
+            if (! this.mouse_op)
+                return;
+
+            ev.stopPropagation();
+            ev.preventDefault();
+
+            this.mouse_op.do_commit();
+            // If this was an op for a different button, switch back to the primary
+            if (this.mouse_op.physical_button !== 0) {
+                this.init_default_mouse_op();
             }
         });
         // Disable context menu, which interferes with right-click tools
@@ -3003,17 +3472,27 @@ export class Editor extends PrimaryView {
             ev.preventDefault();
         });
         window.addEventListener('blur', ev => {
-            this.cancel_mouse_operation();
+            this.cancel_mouse_drag();
+        });
+        window.addEventListener('mouseleave', ev => {
+            this.mouse_coords = null;
         });
 
         // Toolbox
         // Selected tile and rotation buttons
-        this.selected_tile_el = mk('div');
-        this.selected_tile_el.id = 'editor-tile';
-        this.selected_tile_el.addEventListener('click', ev => {
-            if (this.palette_selection && TILES_WITH_PROPS[this.palette_selection.type.name]) {
+        this.fg_tile_el = this.renderer.draw_single_tile_type('wall');
+        this.fg_tile_el.id = 'editor-tile';
+        this.fg_tile_el.addEventListener('click', ev => {
+            if (this.fg_tile && TILES_WITH_PROPS[this.fg_tile.type.name]) {
                 this.open_tile_prop_overlay(
-                    this.palette_selection, null, this.selected_tile_el.getBoundingClientRect());
+                    this.fg_tile, null, this.fg_tile_el.getBoundingClientRect());
+            }
+        });
+        this.bg_tile_el = this.renderer.draw_single_tile_type('floor');
+        this.bg_tile_el.addEventListener('click', ev => {
+            if (this.bg_tile && TILES_WITH_PROPS[this.bg_tile.type.name]) {
+                this.open_tile_prop_overlay(
+                    this.bg_tile, null, this.bg_tile_el.getBoundingClientRect());
             }
         });
         // TODO ones for the palette too??
@@ -3021,22 +3500,35 @@ export class Editor extends PrimaryView {
         this.palette_actor_direction = 'south';
         let rotate_right_button = mk('button.--image', {type: 'button'}, mk('img', {src: 'icons/rotate-right.png'}));
         rotate_right_button.addEventListener('click', ev => {
-            this.rotate_tile_right(this.palette_selection);
-            this.redraw_palette_selection();
+            this.rotate_tile_right(this.fg_tile);
+            this.redraw_foreground_tile();
         });
         let rotate_left_button = mk('button.--image', {type: 'button'}, mk('img', {src: 'icons/rotate-left.png'}));
         rotate_left_button.addEventListener('click', ev => {
-            this.rotate_tile_left(this.palette_selection);
-            this.redraw_palette_selection();
+            this.rotate_tile_left(this.fg_tile);
+            this.redraw_foreground_tile();
         });
         this.root.querySelector('.controls').append(
-            mk('div.editor-tile-controls', rotate_right_button, this.selected_tile_el, rotate_left_button));
+            mk('div.editor-tile-controls',
+                rotate_right_button, this.fg_tile_el, rotate_left_button,
+                this.bg_tile_el));
         // Tools themselves
         let toolbox = mk('div.icon-button-set', {id: 'editor-toolbar'});
         this.root.querySelector('.controls').append(toolbox);
         this.tool_button_els = {};
         for (let toolname of EDITOR_TOOL_ORDER) {
             let tooldef = EDITOR_TOOLS[toolname];
+            let header_text = tooldef.name;
+            if (tooldef.shortcut) {
+                let shortcut;
+                if (tooldef.shortcut === tooldef.shortcut.toUpperCase()) {
+                    shortcut = `Shift-${tooldef.shortcut}`;
+                }
+                else {
+                    shortcut = tooldef.shortcut.toUpperCase();
+                }
+                header_text += ` (${shortcut})`;
+            }
             let button = mk(
                 'button', {
                     type: 'button',
@@ -3046,13 +3538,13 @@ export class Editor extends PrimaryView {
                     src: tooldef.icon,
                     alt: tooldef.name,
                 }),
-                mk('div.-help.editor-big-tooltip', mk('h3', tooldef.name), tooldef.desc),
+                mk('div.-help.editor-big-tooltip', mk('h3', header_text), tooldef.desc),
             );
             this.tool_button_els[toolname] = button;
             toolbox.append(button);
         }
-        this.current_tool = 'pencil';
-        this.tool_button_els['pencil'].classList.add('-selected');
+        this.current_tool = null;
+        this.select_tool('pencil');
         toolbox.addEventListener('click', ev => {
             let button = ev.target.closest('.icon-button-set button');
             if (! button)
@@ -3085,9 +3577,7 @@ export class Editor extends PrimaryView {
         this.save_button = _make_button("Save", ev => {
             this.save_level();
         });
-        if (this.stored_level) {
-            this.save_button.disabled = ! this.conductor.stored_game.editor_metadata;
-        }
+
         _make_button("Download level as C2M", ev => {
             // TODO also allow download as CCL
             // TODO support getting warnings + errors out of synthesis
@@ -3189,10 +3679,10 @@ export class Editor extends PrimaryView {
                 let entry;
                 if (SPECIAL_PALETTE_ENTRIES[key]) {
                     let tile = SPECIAL_PALETTE_ENTRIES[key];
-                    entry = this.renderer.create_tile_type_canvas(tile.name, tile);
+                    entry = this.renderer.draw_single_tile_type(tile.name, tile);
                 }
                 else {
-                    entry = this.renderer.create_tile_type_canvas(key);
+                    entry = this.renderer.draw_single_tile_type(key);
                 }
                 entry.setAttribute('data-palette-key', key);
                 entry.classList = 'palette-entry';
@@ -3200,10 +3690,23 @@ export class Editor extends PrimaryView {
                 section_el.append(entry);
             }
         }
-        palette_el.addEventListener('click', ev => {
+        palette_el.addEventListener('mousedown', ev => {
             let entry = ev.target.closest('canvas.palette-entry');
             if (! entry)
                 return;
+
+            let fg;
+            if (ev.button === 0) {
+                fg = true;
+            }
+            else if (ev.button === 2) {
+                fg = false;
+            }
+            else {
+                return;
+            }
+            ev.preventDefault();
+            ev.stopPropagation();
 
             let key = entry.getAttribute('data-palette-key');
             if (SPECIAL_PALETTE_ENTRIES[key]) {
@@ -3211,12 +3714,30 @@ export class Editor extends PrimaryView {
                 let tile = Object.assign({}, SPECIAL_PALETTE_ENTRIES[key]);
                 tile.type = TILE_TYPES[tile.name];
                 delete tile.name;
-                this.select_palette(tile, true);
+                if (fg) {
+                    this.select_foreground_tile(tile, true);
+                }
+                else {
+                    if (tile.type.layer !== LAYERS.terrain)
+                        return;
+                    this.select_background_tile(tile, true);
+                }
             }
             else {
                 // Regular tile name
-                this.select_palette(key, true);
+                if (fg) {
+                    this.select_foreground_tile(key, true);
+                }
+                else {
+                    if (TILE_TYPES[key].layer !== LAYERS.terrain)
+                        return;
+                    this.select_background_tile(key, true);
+                }
             }
+        });
+        // Disable context menu so right-click works
+        palette_el.addEventListener('contextmenu', ev => {
+            ev.preventDefault();
         });
         // Hover help
         palette_el.addEventListener('mouseover', ev => {
@@ -3236,8 +3757,12 @@ export class Editor extends PrimaryView {
         this.palette_tooltip = mk('div.editor-palette-tooltip.editor-big-tooltip', mk('h3'), mk('p'));
         this.root.append(this.palette_tooltip);
 
-        this.palette_selection = null;
-        this.select_palette('floor', true);
+        this.fg_tile = null;  // used for most drawing
+        this.fg_tile_from_palette = false;
+        this.palette_fg_selected_el = null;
+        this.select_foreground_tile('wall', true);
+        this.bg_tile = null;  // used to populate new/cleared cells
+        this.select_background_tile('floor', true);
 
         this.selection = new Selection(this);
 
@@ -3265,7 +3790,7 @@ export class Editor extends PrimaryView {
         let cell = new format_base.StoredCell;
         cell.x = x;
         cell.y = y;
-        cell[LAYERS.terrain] = {type: TILE_TYPES.floor};
+        cell[LAYERS.terrain] = {...this.bg_tile};
         return cell;
     }
 
@@ -3553,6 +4078,9 @@ export class Editor extends PrimaryView {
         if (! stored_pack.editor_metadata)
             return;
 
+        this.modified = false;
+        this.undo_modification_offset = 0;
+
         // Update the pack itself
         // TODO maybe should keep this around, but there's a tricky order of operations thing
         // with it
@@ -3572,6 +4100,7 @@ export class Editor extends PrimaryView {
         if (this._level_browser) {
             this._level_browser.expire(this.conductor.level_index);
         }
+        this._update_ui_after_edit();
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -3586,6 +4115,7 @@ export class Editor extends PrimaryView {
         this.stored_level = stored_level;
         this.update_viewport_size();
         this.update_cell_coordinates();
+        this.modified = false;
 
         // Remember current level for an editor level
         if (this.conductor.stored_game.editor_metadata) {
@@ -3615,10 +4145,6 @@ export class Editor extends PrimaryView {
         this.renderer.set_level(stored_level);
         if (this.active) {
             this.redraw_entire_level();
-        }
-
-        if (this.save_button) {
-            this.save_button.disabled = ! this.conductor.stored_game.editor_metadata;
         }
 
         if (this._done_setup) {
@@ -3654,9 +4180,22 @@ export class Editor extends PrimaryView {
         if (! this.tool_button_els[tool])
             return;
 
-        this.tool_button_els[this.current_tool].classList.remove('-selected');
+        if (this.current_tool) {
+            this.tool_button_els[this.current_tool].classList.remove('-selected');
+        }
         this.current_tool = tool;
         this.tool_button_els[this.current_tool].classList.add('-selected');
+        this.init_default_mouse_op();
+    }
+
+    init_default_mouse_op() {
+        if (this.mouse_op) {
+            this.mouse_op.do_destroy();
+            this.mouse_op = null;
+        }
+        if (this.current_tool && EDITOR_TOOLS[this.current_tool].op1) {
+            this.mouse_op = new EDITOR_TOOLS[this.current_tool].op1(this, ...(this.mouse_coords ?? [0, 0]), 0);  // FIXME?
+        }
     }
 
     show_palette_tooltip(key) {
@@ -3688,7 +4227,7 @@ export class Editor extends PrimaryView {
         this.palette_tooltip.classList.remove('--visible');
     }
 
-    select_palette(name_or_tile, from_palette = false) {
+    _name_or_tile_to_name_and_tile(name_or_tile) {
         let name, tile;
         if (typeof name_or_tile === 'string') {
             name = name_or_tile;
@@ -3702,36 +4241,49 @@ export class Editor extends PrimaryView {
             }
         }
         else {
-            tile = Object.assign({}, name_or_tile);
+            tile = {...name_or_tile};
             name = tile.type.name;
         }
+        return [name, tile];
+    }
+
+    select_foreground_tile(name_or_tile, from_palette = false) {
+        let [name, tile] = this._name_or_tile_to_name_and_tile(name_or_tile);
 
         // Deselect any previous selection
-        if (this.palette_selection_el) {
-            this.palette_selection_el.classList.remove('--selected');
+        if (this.palette_fg_selected_el) {
+            this.palette_fg_selected_el.classList.remove('--selected');
         }
 
         // Store the tile
-        this.palette_selection = tile;
-        this.palette_selection_from_palette = from_palette;
+        this.fg_tile = tile;
+        this.fg_tile_from_palette = from_palette;
 
         // Select it in the palette, if possible
         let key = name;
         if (SPECIAL_PALETTE_BEHAVIOR[name]) {
             key = SPECIAL_PALETTE_BEHAVIOR[name].pick_palette_entry(tile);
         }
-        this.palette_selection_el = this.palette[key] ?? null;
-        if (this.palette_selection_el) {
-            this.palette_selection_el.classList.add('--selected');
+        this.palette_fg_selected_el = this.palette[key] ?? null;
+        if (this.palette_fg_selected_el) {
+            this.palette_fg_selected_el.classList.add('--selected');
         }
 
-        this.redraw_palette_selection();
+        this.redraw_foreground_tile();
 
         // Some tools obviously don't work with a palette selection, in which case changing tiles
         // should default you back to the pencil
         if (! EDITOR_TOOLS[this.current_tool].uses_palette) {
             this.select_tool('pencil');
         }
+    }
+
+    select_background_tile(name_or_tile) {
+        let [name, tile] = this._name_or_tile_to_name_and_tile(name_or_tile);
+
+        this.bg_tile = tile;
+
+        this.redraw_background_tile();
     }
 
     rotate_tile_left(tile) {
@@ -3771,11 +4323,24 @@ export class Editor extends PrimaryView {
     // ------------------------------------------------------------------------------------------------
     // Drawing
 
-    redraw_palette_selection() {
-        // FIXME should redraw in an existing canvas
-        this.selected_tile_el.textContent = '';
-        this.selected_tile_el.append(this.renderer.create_tile_type_canvas(
-            this.palette_selection.type.name, this.palette_selection));
+    redraw_foreground_tile() {
+        let ctx = this.fg_tile_el.getContext('2d');
+        ctx.clearRect(0, 0, this.fg_tile_el.width, this.fg_tile_el.height);
+        this.renderer.draw_single_tile_type(
+            this.fg_tile.type.name, this.fg_tile, this.fg_tile_el);
+        if (this.mouse_op) {
+            this.mouse_op.handle_tile_updated();
+        }
+    }
+
+    redraw_background_tile() {
+        let ctx = this.bg_tile_el.getContext('2d');
+        ctx.clearRect(0, 0, this.bg_tile_el.width, this.bg_tile_el.height);
+        this.renderer.draw_single_tile_type(
+            this.bg_tile.type.name, this.bg_tile, this.bg_tile_el);
+        if (this.mouse_op) {
+            this.mouse_op.handle_tile_updated(true);
+        }
     }
 
     mark_cell_dirty(cell) {
@@ -3854,7 +4419,6 @@ export class Editor extends PrimaryView {
             return;
 
         // Replace whatever's on the same layer
-        // TODO should preserve wiring if possible too
         let layer = tile.type.layer;
         let existing_tile = cell[layer];
 
@@ -3862,7 +4426,7 @@ export class Editor extends PrimaryView {
         // behavior (only the case if it came from the palette)
         if (existing_tile && existing_tile.type === tile.type &&
             // FIXME this is hacky garbage
-            tile === this.palette_selection && this.palette_selection_from_palette &&
+            tile === this.fg_tile && this.fg_tile_from_palette &&
             SPECIAL_PALETTE_BEHAVIOR[tile.type.name] &&
             SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_draw)
         {
@@ -3873,35 +4437,58 @@ export class Editor extends PrimaryView {
             return;
         }
 
-        this._assign_tile(cell, layer, {...tile}, existing_tile);
+        let new_tile = {...tile};
+        // Special case: preserve wires when replacing one wired tile with another
+        if (new_tile.type.contains_wire &&
+            // FIXME this is hacky garbage
+            tile === this.fg_tile && this.fg_tile_from_palette)
+        {
+            if (existing_tile.type.contains_wire) {
+                new_tile.wire_directions = existing_tile.wire_directions;
+            }
+            else if (existing_tile.type.name === 'logic_gate') {
+                // Extract the wires from logic gates
+                new_tile.wire_directions = 0;
+                for (let dir of existing_tile.type.get_wires(existing_tile)) {
+                    if (dir) {
+                        new_tile.wire_directions |= DIRECTIONS[dir].bit;
+                    }
+                }
+            }
+        }
+
+        this._assign_tile(cell, layer, new_tile, existing_tile);
     }
 
     erase_tile(cell, tile = null) {
         // TODO respect selection
 
         if (tile === null) {
-            tile = this.palette_selection;
+            tile = this.fg_tile;
         }
 
-        this.mark_cell_dirty(cell);
         let existing_tile = cell[tile.type.layer];
 
         // If we find a tile of the same type as the one being drawn, see if it has custom combine
         // behavior (only the case if it came from the palette)
         if (existing_tile && existing_tile.type === tile.type &&
             // FIXME this is hacky garbage
-            tile === this.palette_selection && this.palette_selection_from_palette &&
+            tile === this.fg_tile && this.fg_tile_from_palette &&
             SPECIAL_PALETTE_BEHAVIOR[tile.type.name] &&
             SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_erase)
         {
-            let remove = SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_erase(tile, existing_tile);
-            if (! remove)
+            let old_tile = {...existing_tile};
+            let new_tile = existing_tile;
+            let remove = SPECIAL_PALETTE_BEHAVIOR[tile.type.name].combine_erase(tile, new_tile);
+            if (! remove) {
+                this._assign_tile(cell, tile.type.layer, new_tile, old_tile);
                 return;
+            }
         }
 
         let new_tile = null;
         if (tile.type.layer === LAYERS.terrain) {
-            new_tile = {type: TILE_TYPES.floor};
+            new_tile = {...this.bg_tile};
         }
 
         this._assign_tile(cell, tile.type.layer, new_tile, existing_tile);
@@ -3968,9 +4555,8 @@ export class Editor extends PrimaryView {
     _done(redo, undo, modifies = true) {
         // TODO parallel arrays would be smaller
         this.undo_entry.push([undo, redo]);
-
-        if (this.redo_stack.length > 0) {
-            this.redo_stack.length = 0;
+        if (modifies) {
+            this.undo_entry.modifies = true;
         }
     }
 
@@ -3991,7 +4577,11 @@ export class Editor extends PrimaryView {
         this.undo_entry = [];
         this.undo_stack = [];
         this.redo_stack = [];
-        this._update_undo_redo_enabled();
+        // Number of steps we'd need to take (negative if redo, positive if undo) to reach a
+        // pristine saved state.  May also be null, meaning the pristine state is in a redo branch
+        // that has been overwritten and is thus unreachable.
+        this.undo_modification_offset = 0;
+        this._update_ui_after_edit();
     }
 
     undo() {
@@ -4001,6 +4591,7 @@ export class Editor extends PrimaryView {
         if (this.undo_entry.length > 0) {
             entry = this.undo_entry;
             this.undo_entry = [];
+            console.warn("lingering undo entry");
         }
         else if (this.undo_stack.length > 0) {
             entry = this.undo_stack.pop();
@@ -4014,7 +4605,9 @@ export class Editor extends PrimaryView {
             entry[i][0]();
         }
 
-        this._update_undo_redo_enabled();
+        this._track_undo_offset(-1, entry.modifies);
+
+        this._update_ui_after_edit();
     }
 
     redo() {
@@ -4028,28 +4621,63 @@ export class Editor extends PrimaryView {
             redo();
         }
 
-        this._update_undo_redo_enabled();
+        this._track_undo_offset(+1, entry.modifies);
+
+        this._update_ui_after_edit();
     }
 
-    commit_undo() {
-        if (this.undo_entry.length > 0) {
-            this.undo_stack.push(this.undo_entry);
-            this.undo_entry = [];
+    _track_undo_offset(delta, modifies) {
+        if (this.undo_modification_offset === null) {
+            return;
+        }
+        else if (this.undo_modification_offset === 0) {
+            if (modifies) {
+                this.modified = true;
+                this.undo_modification_offset += delta;
+            }
+        }
+        else {
+            this.undo_modification_offset += delta;
+            if (this.undo_modification_offset === 0) {
+                this.modified = false;
+            }
+        }
+    }
+
+    commit_undo(label = null) {
+        if (this.undo_entry.length === 0)
+            return;
+
+        if (this.undo_entry.modifies) {
+            this.modified = true;
+        }
+        this.undo_stack.push(this.undo_entry);
+        this.undo_entry = [];
+
+        // Doing an action always erases the redo stack
+        if (this.redo_stack.length > 0) {
+            this.redo_stack.length = 0;
+            if (this.undo_modification_offset < 0) {
+                // Pristine state was in the future, so it's now unreachable
+                this.undo_modification_offset = null;
+            }
         }
 
-        this._update_undo_redo_enabled();
+        this._update_ui_after_edit();
     }
 
-    _update_undo_redo_enabled() {
+    _update_ui_after_edit() {
         this.undo_button.disabled = this.undo_stack.length === 0;
         this.redo_button.disabled = this.redo_stack.length === 0;
+        this.save_button.disabled = ! (
+            this.stored_level && this.modified && this.conductor.stored_game.editor_metadata);
     }
 
     // ------------------------------------------------------------------------------------------------
     // Misc UI stuff
 
     open_tile_prop_overlay(tile, cell, rect) {
-        this.cancel_mouse_operation();
+        this.cancel_mouse_drag();
         // FIXME keep these around, don't recreate them constantly
         let overlay_class = TILES_WITH_PROPS[tile.type.name];
         let overlay = new overlay_class(this.conductor);
@@ -4085,10 +4713,9 @@ export class Editor extends PrimaryView {
         root.style.setProperty('--chevron-offset', `${(rect.left + rect.right) / 2 - left}px`);
     }
 
-    cancel_mouse_operation() {
-        if (this.mouse_op) {
+    cancel_mouse_drag() {
+        if (this.mouse_op && this.mouse_op.is_held) {
             this.mouse_op.do_abort();
-            this.mouse_op = null;
         }
     }
 }

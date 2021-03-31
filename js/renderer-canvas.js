@@ -16,6 +16,7 @@ class CanvasRendererDrawPacket extends DrawPacket {
         this.offsety = 0;
         // Compatibility settings
         this.use_cc2_anim_speed = renderer.use_cc2_anim_speed;
+        this.show_facing = renderer.show_facing;
     }
 
     blit(tx, ty, mx = 0, my = 0, mw = 1, mh = mw, mdx = mx, mdy = my) {
@@ -60,6 +61,7 @@ export class CanvasRenderer {
         this.viewport_dirty = false;
         this.show_actor_bboxes = false;
         this.show_actor_order = false;
+        this.show_facing = false;
         this.use_rewind_effect = false;
         this.perception = 'normal';  // normal, xray, editor, palette
         this.hide_logic = false;
@@ -369,12 +371,18 @@ export class CanvasRenderer {
         }
     }
 
-    create_tile_type_canvas(name, tile = null) {
-        let canvas = mk('canvas', {width: this.tileset.size_x, height: this.tileset.size_y});
+    // TODO one wonders why this operates on a separate canvas and we don't just make new renderers
+    // or something, or maybe make this a tileset method
+    draw_single_tile_type(name, tile = null, canvas = null, x = 0, y = 0) {
+        if (! canvas) {
+            canvas = mk('canvas', {width: this.tileset.size_x, height: this.tileset.size_y});
+        }
         let ctx = canvas.getContext('2d');
 
         // Individual tile types always reveal what they are
         let packet = new CanvasRendererDrawPacket(this, ctx, 'palette');
+        packet.x = x;
+        packet.y = y;
         this.tileset.draw_type(name, tile, packet);
         return canvas;
     }

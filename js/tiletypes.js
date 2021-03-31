@@ -385,6 +385,7 @@ const TILE_TYPES = {
     // Floors and walls
     floor: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         on_approach(me, level, other) {
             if (other.type.name === 'blob' || other.type.name === 'boulder') {
                 // Blobs spread slime onto floor
@@ -508,10 +509,27 @@ const TILE_TYPES = {
     thin_walls: {
         layer: LAYERS.thin_wall,
         blocks(me, level, actor, direction) {
-            return ((me.edges & DIRECTIONS[direction].opposite_bit) !== 0) && actor.type.name !== 'ghost';
+            if (actor.type.name === 'ghost')
+                return false;
+            return (me.edges & DIRECTIONS[direction].opposite_bit) !== 0;
         },
         blocks_leaving(me, actor, direction) {
-            return ((me.edges & DIRECTIONS[direction].bit) !== 0) && actor.type.name !== 'ghost';
+            if (actor.type.name === 'ghost')
+                return false;
+            return (me.edges & DIRECTIONS[direction].bit) !== 0;
+        },
+        populate_defaults(me) {
+            me.edges = 0;  // bitmask of directions
+        },
+    },
+    // These only support one-way into the tile, so they're pretty much thin walls that can only
+    // stop something from leaving
+    one_way_walls: {
+        layer: LAYERS.thin_wall,
+        blocks_leaving(me, actor, direction) {
+            if (actor.type.name === 'ghost')
+                return false;
+            return (me.edges & DIRECTIONS[direction].bit) !== 0;
         },
         populate_defaults(me) {
             me.edges = 0;  // bitmask of directions
@@ -584,6 +602,7 @@ const TILE_TYPES = {
     steel: {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.all,
+        contains_wire: true,
     },
     canopy: {
         layer: LAYERS.canopy,
@@ -854,6 +873,7 @@ const TILE_TYPES = {
     },
     turntable_cw: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         wire_propagation_mode: 'all',
         on_arrive(me, level, other) {
             level.set_actor_direction(other, DIRECTIONS[other.direction].right);
@@ -870,6 +890,7 @@ const TILE_TYPES = {
     },
     turntable_ccw: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         wire_propagation_mode: 'all',
         on_arrive(me, level, other) {
             level.set_actor_direction(other, DIRECTIONS[other.direction].left);
@@ -1897,6 +1918,7 @@ const TILE_TYPES = {
     teleport_blue: {
         layer: LAYERS.terrain,
         slide_mode: 'teleport',
+        contains_wire: true,
         wire_propagation_mode: 'all',
         *teleport_dest_order(me, level, other) {
             let exit_direction = other.direction;
@@ -1977,11 +1999,13 @@ const TILE_TYPES = {
     },
     teleport_blue_exit: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         wire_propagation_mode: 'all',
     },
     teleport_red: {
         layer: LAYERS.terrain,
         slide_mode: 'teleport',
+        contains_wire: true,
         wire_propagation_mode: 'none',
         teleport_allow_override: true,
         on_begin(me, level) {
@@ -2305,6 +2329,7 @@ const TILE_TYPES = {
     },
     button_pink: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         is_power_source: true,
         wire_propagation_mode: 'none',
         get_emitting_edges(me, level) {
@@ -2327,6 +2352,7 @@ const TILE_TYPES = {
     },
     button_black: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         is_power_source: true,
         wire_propagation_mode: 'cross',
         get_emitting_edges(me, level) {
@@ -2412,6 +2438,30 @@ const TILE_TYPES = {
                 me.underflowing = false;
                 me.direction = 'north';
             }
+        },
+        // Returns [in0, in1, out0, out1] as directions
+        get_wires(me) {
+            let gate_def = me.type._gate_types[me.gate_type];
+            let dir = me.direction;
+            let ret = [null, null, null, null];
+            for (let i = 0; i < 4; i++) {
+                let cxn = gate_def[i];
+                let dirinfo = DIRECTIONS[dir];
+                if (cxn === 'in0') {
+                    ret[0] = dir;
+                }
+                else if (cxn === 'in1') {
+                    ret[1] = dir;
+                }
+                else if (cxn === 'out0') {
+                    ret[2] = dir;
+                }
+                else if (cxn === 'out1') {
+                    ret[3] = dir;
+                }
+                dir = dirinfo.right;
+            }
+            return ret;
         },
         get_emitting_edges(me, level) {
             // Collect which of our edges are powered, in clockwise order starting from our
@@ -2505,7 +2555,9 @@ const TILE_TYPES = {
     // Light switches, kinda like the pink/black buttons but persistent
     light_switch_off: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         is_power_source: true,
+        wire_propagation_mode: 'none',
         get_emitting_edges(me, level) {
             // TODO weird and inconsistent with pink buttons, but cc2 has a single-frame delay here!
             if (me.is_first_frame) {
@@ -2523,7 +2575,9 @@ const TILE_TYPES = {
     },
     light_switch_on: {
         layer: LAYERS.terrain,
+        contains_wire: true,
         is_power_source: true,
+        wire_propagation_mode: 'none',
         get_emitting_edges(me, level) {
             // TODO weird and inconsistent with pink buttons, but cc2 has a single-frame delay here!
             if (me.is_first_frame) {
@@ -2546,6 +2600,7 @@ const TILE_TYPES = {
         item_pickup_priority: PICKUP_PRIORITIES.never,
         is_actor: true,
         is_block: true,
+        contains_wire: true,
         can_reverse_on_railroad: true,
         movement_speed: 4,
         on_clone(me, original) {
@@ -2565,6 +2620,7 @@ const TILE_TYPES = {
         blocks_collision: COLLISION.block_cc1 | COLLISION.monster_solid,
         item_priority: PICKUP_PRIORITIES.real_player,
         on_pickup(me, level, other) {
+            level.sfx.play_once('get-stopwatch-bonus', me.cell);
             level.adjust_timer(+10);
             return true;
         },
@@ -2574,6 +2630,7 @@ const TILE_TYPES = {
         blocks_collision: COLLISION.block_cc1 | COLLISION.monster_solid,
         item_priority: PICKUP_PRIORITIES.real_player,
         on_pickup(me, level, other) {
+            level.sfx.play_once('get-stopwatch-penalty', me.cell);
             level.adjust_timer(-10);
             return true;
         },
@@ -2583,6 +2640,7 @@ const TILE_TYPES = {
         blocks_collision: COLLISION.block_cc1 | COLLISION.monster_solid,
         item_priority: PICKUP_PRIORITIES.player,
         on_pickup(me, level, other) {
+            level.sfx.play_once('get-stopwatch-toggle', me.cell);
             level.pause_timer();
             return false;
         },
@@ -3562,6 +3620,7 @@ const TILE_TYPES = {
                     if (other === level.player) {
                         level.swap_player1 = true;
                     }
+                    level.sfx.play_once('exit', me.cell);
                     level.transmute_tile(other, other.type.name === 'player' ? 'player1_exit' : 'player2_exit');
                 }
             }

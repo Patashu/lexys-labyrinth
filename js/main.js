@@ -309,6 +309,12 @@ class SFXPlayer {
             'get-chip-last': 'sfx/get-chip-last.ogg',
             // https://jummbus.bitbucket.io/#j2N07get-keyn100s0k0l00e00t3Mmfa3g00j07i0r1O_U0o5T0v0pL0OD0Ou00q1d5f8y0z2C0w1c0h0b4p1dFyW85CbwwzBg0
             'get-key': 'sfx/get-key.ogg',
+            // https://jummbus.bitbucket.io/#j3N0jget-stopwatch-bonusn100s1k0l00e00t50mca3g00j07i0r1O_U0o5T0v0pL0OaD0Ou00q0d1f7y1z2C1w4c0h8b4p19FyUsmIVk0
+            'get-stopwatch-bonus': 'sfx/get-stopwatch-bonus.ogg',
+            // https://jummbus.bitbucket.io/#j3N0lget-stopwatch-penaltyn100s1k0l00e00t50mca3g00j07i0r1O_U0o5T0v0pL0OaD0Ou00q0d1f7y1z2C1w4c0h8b4p19FyWxp8Vk0
+            'get-stopwatch-penalty': 'sfx/get-stopwatch-penalty.ogg',
+            // https://jummbus.bitbucket.io/#j3N0kget-stopwatch-togglen100s0k0l00e00t50mca3g00j07i0r1O_U0o5T0v0pL0OaD0Ou00q0d1f7y1z2C1w4c0h8b4p19FyWxq3Bg0
+            'get-stopwatch-toggle': 'sfx/get-stopwatch-toggle.ogg',
             // https://jummbus.bitbucket.io/#j2N08get-tooln100s0k0l00e00t3Mm6a3g00j07i0r1O_U0o2T0v0pL0OD0Ou00q1d1f4y2z9C0w2c0h0b4p1bGqKNW4isVk0
             'get-tool': 'sfx/get-tool.ogg',
             // https://jummbus.bitbucket.io/#j3N07popwalln110s0k0l00e00t3Mm2a3g00j07i0r1O_U00o40T0v0zL0OaD0Ou10q0d0f8y0z1C2w2c0Gc0h0T2v0aL0OaD0Ou02q1d5f1y0z3C1w1h0b4gp190ap6Ker00
@@ -356,6 +362,8 @@ class SFXPlayer {
             tick: 'sfx/tick.ogg',
             // https://jummbus.bitbucket.io/#j2N06timeupn100s0k0l00e00t3Mm4a3g00j07i0r1O_U0o3T1v0pL0OD0Ou01q1d5f4y1z8C1c0A0F0B0V1Q38e0Pa610E0861b4p1dIyfgKPcLucqU0
             timeup: 'sfx/timeup.ogg',
+            // https://jummbus.bitbucket.io/#j3N04exitn200s0k0l00e00t2wm9a3g00j07i0r1O_U00o32T0v0uL0OaD0Ou00q1d1f5y1z1C2w1c2Gc0h0T0v0fL0OaD0Ou00q0d1f2y1z2C0w2c3h0b4gp1rFyW4xo2FGNixYe30kOesCnOjwM0
+            exit: 'sfx/exit.ogg',
             // https://jummbus.bitbucket.io/#j2N03winn200s0k0l00e00t2wm9a3g00j07i0r1O_U00o32T0v0EL0OD0Ou00q1d1f5y1z1C2w1c2h0T0v0pL0OD0Ou00q0d1f2y1z2C0w2c3h0b4gp1xFyW4xo31pe0MaCHCbwLbM5cFDgapBOyY0
             win: 'sfx/win.ogg',
             //from Ableton Retro Synths
@@ -474,27 +482,7 @@ class Player extends PrimaryView {
         });
         this.undo_button = this.root.querySelector('.control-undo');
         this.undo_button.addEventListener('click', ev => {
-            let player_cell = this.level.player.cell;
-            // Keep undoing until (a) we're on another cell and (b) we're not sliding, i.e. we're
-            // about to make a conscious move.  Note that this means undoing all the way through
-            // force floors, even if you could override them!
-            let moved = false;
-            while (this.level.has_undo() &&
-                ! (moved && this.level.player.slide_mode === null))
-            {
-                this.undo();
-                if (player_cell !== this.level.player.cell) {
-                    moved = true;
-                }
-            }
-            // TODO set back to waiting if we hit the start of the level?  but
-            // the stack trims itself so how do we know that
-            if (this.state === 'stopped') {
-                // Be sure to undo any success or failure
-                this.set_state('playing');
-            }
-            this.update_ui();
-            this._redraw();
+            this.undo_last_move();
             ev.target.blur();
         });
         this.rewind_button = this.root.querySelector('.control-rewind');
@@ -664,6 +652,14 @@ class Player extends PrimaryView {
                     (this.state === 'stopped' || this.state === 'playing' || this.state === 'paused'))
                 {
                     this.set_state('rewinding');
+                }
+                return;
+            }
+            if (ev.key === 'u') {
+                if (this.level.has_undo() &&
+                    (this.state === 'stopped' || this.state === 'playing' || this.state === 'paused'))
+                {
+                    this.undo_last_move();
                 }
             }
 
@@ -1330,6 +1326,8 @@ class Player extends PrimaryView {
         this.root.classList.remove('--replay-playback');
         this.root.classList.remove('--replay-recording');
         this.root.classList.remove('--bonus-visible');
+        this.root.classList.toggle('--hide-logic', this.level.stored_level.hide_logic);
+        this.root.classList.toggle('--cc1-boots', this.level.stored_level.use_cc1_boots);
 
         if (this.debug.enabled) {
             this.debug.replay = null;
@@ -1511,6 +1509,30 @@ class Player extends PrimaryView {
         this.level.undo();
     }
 
+    undo_last_move() {
+        let player_cell = this.level.player.cell;
+        // Keep undoing until (a) we're on another cell and (b) we're not sliding, i.e. we're
+        // about to make a conscious move.  Note that this means undoing all the way through
+        // force floors, even if you could override them!
+        let moved = false;
+        while (this.level.has_undo() &&
+            ! (moved && this.level.player.slide_mode === null))
+        {
+            this.undo();
+            if (player_cell !== this.level.player.cell) {
+                moved = true;
+            }
+        }
+        // TODO set back to waiting if we hit the start of the level?  but
+        // the stack trims itself so how do we know that
+        if (this.state === 'stopped') {
+            // Be sure to undo any success or failure
+            this.set_state('playing');
+        }
+        this.update_ui();
+        this._redraw();
+    }
+
     // Redraws every frame, unless the game isn't running
     redraw() {
         let update_progress;
@@ -1570,7 +1592,7 @@ class Player extends PrimaryView {
     render_inventory_tile(name) {
         if (! this._inventory_tiles[name]) {
             // TODO reuse the canvas for data urls
-            let canvas = this.renderer.create_tile_type_canvas(name);
+            let canvas = this.renderer.draw_single_tile_type(name);
             this._inventory_tiles[name] = canvas.toDataURL();
         }
         return this._inventory_tiles[name];
@@ -2336,6 +2358,16 @@ class Splash extends PrimaryView {
     }
 
     setup() {
+        this.root.querySelector('#splash-fullscreen').addEventListener('click', ev => {
+            let html = document.documentElement;
+            if (document.fullscreenElement || document.webkitFullscreenElement) {
+                (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+            }
+            else {
+                (html.requestFullscreen || html.webkitRequestFullscreen).call(html);
+            }
+        });
+
         // Editor interface
         // (this has to be handled here because we need to examine the editor,
         // which hasn't yet been created in our constructor)
@@ -2863,9 +2895,9 @@ class OptionsOverlay extends DialogOverlay {
         result_el.append(
             `This looks like a ${layout['#name']} tileset with ${tw}×${th} tiles.`,
             mk('br'),
-            renderer.create_tile_type_canvas('player'),
-            renderer.create_tile_type_canvas('chip'),
-            renderer.create_tile_type_canvas('exit'),
+            renderer.draw_single_tile_type('player'),
+            renderer.draw_single_tile_type('chip'),
+            renderer.draw_single_tile_type('exit'),
             mk('br'),
         );
 
@@ -2940,9 +2972,9 @@ class OptionsOverlay extends DialogOverlay {
         }
         dd.append(
             // TODO allow me to draw an arbitrary tile to an arbitrary point on a given canvas!
-            renderer.create_tile_type_canvas('player'),
-            renderer.create_tile_type_canvas('chip'),
-            renderer.create_tile_type_canvas('exit'),
+            renderer.draw_single_tile_type('player'),
+            renderer.draw_single_tile_type('chip'),
+            renderer.draw_single_tile_type('exit'),
         );
     }
 
@@ -4040,17 +4072,13 @@ async function main() {
         await main();
     }
     catch (e) {
-        let failed = document.getElementById('failed');
-        document.getElementById('loading').setAttribute('hidden', '');
-        failed.removeAttribute('hidden');
-        document.body.setAttribute('data-mode', 'failed');
-
-        failed.appendChild(mk('p',
-            "I did manage to capture this error, which you might be able to ",
-            mk('a', {href: 'https://github.com/eevee/lexys-labyrinth'}, "report somewhere"),
-            ":",
-        ));
-        failed.appendChild(mk('pre.stack-trace', e.toString(), "\n\n", (e.stack ?? "").replace(/^/mg, "  ")));
+        if (ll_log_fatal_error) {
+            ll_log_fatal_error(e);
+        }
         throw e;
+    }
+
+    if (ll_successfully_loaded) {
+        ll_successfully_loaded();
     }
 })();
