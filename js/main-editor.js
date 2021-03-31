@@ -1641,6 +1641,9 @@ const EDITOR_PALETTE = [{
         'cloud_nonplayer',
         'hidden_item',
         'hidden_item_robust',
+        'bucket_water',
+        'bucket_lava',
+        'bucket_gravel',
     ],
 }];
 
@@ -2314,6 +2317,18 @@ const EDITOR_TILE_DESCRIPTIONS = {
     hidden_item_robust: {
         name: "Hidden item (robust)",
         desc: "Hides and negates the properties of the item underneath until after the first time it's stepped on. Unlike regular hidden item, can't be erased.",
+    },
+    bucket_water: {
+        name: "Bucket (water)",
+        desc: "When dropped and left behind by a player, turns the tile into water.",
+    },
+    bucket_lava: {
+        name: "Bucket (laval)",
+        desc: "When dropped and left behind by a player, turns the tile into lava.",
+    },
+    bucket_gravel: {
+        name: "Bucket (gravel)",
+        desc: "When dropped and left behind by a player, turns the tile into gravel.",
     },
 };
 

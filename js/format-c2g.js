@@ -853,6 +853,7 @@ const TILE_ENCODING = {
         extra_args: [arg_direction],
         is_extension: true,
     },
+    //0xdb-0xdf
     0xe0: {
         name: 'gift_bow',
         has_next: true,
@@ -894,6 +895,7 @@ const TILE_ENCODING = {
         name: 'sand',
         is_extension: true,
     },
+    //0xe8-0xec
     0xed: {
         name: 'ankh',
         has_next: true,
@@ -964,6 +966,21 @@ const TILE_ENCODING = {
     },
     0xfb: {
         name: 'hidden_item_robust',
+        has_next: true,
+        is_extension: true,
+    },
+    0xfc: {
+        name: 'bucket_water',
+        has_next: true,
+        is_extension: true,
+    },
+    0xfd: {
+        name: 'bucket_lava',
+        has_next: true,
+        is_extension: true,
+    },
+    0xfe: {
+        name: 'bucket_gravel',
         has_next: true,
         is_extension: true,
     },

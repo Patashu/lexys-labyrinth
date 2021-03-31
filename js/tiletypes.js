@@ -3270,7 +3270,7 @@ const TILE_TYPES = {
         on_depart(me, level, other) {
             let terrain = me.cell.get_terrain();
             if (other.type.is_real_player && terrain && terrain.type.name === 'floor' &&
-                terrain.wire_directions === 0 && terrain.wire_tunnel_directions === 0)
+                terrain.wire_directions === 0 && terrain.wire_tunnel_directions === 0 && !me.cell.get_item_mod())
             {
                 if (level.ankh_tile) {
                     level.transmute_tile(level.ankh_tile, 'floor');
@@ -3290,6 +3290,45 @@ const TILE_TYPES = {
     floor_ankh: {
         layer: LAYERS.terrain,
         blocks_collision: COLLISION.all_but_real_player,
+    },
+    bucket_water: {
+      ...COMMON_TOOL,
+      on_depart(me, level, other) {
+            let terrain = me.cell.get_terrain();
+            if (other.type.is_real_player && !me.cell.get_item_mod())
+            {
+                level.sfx.play_once('splash', me.cell);
+                level.transmute_tile(terrain, 'water');
+                level.spawn_animation(me.cell, 'splash');
+                level.remove_tile(me);
+            }
+        },
+    },
+    bucket_lava: {
+      ...COMMON_TOOL,
+      on_depart(me, level, other) {
+            let terrain = me.cell.get_terrain();
+            if (other.type.is_real_player && !me.cell.get_item_mod())
+            {
+                level.sfx.play_once('bomb', me.cell);
+                level.transmute_tile(terrain, 'fire');
+                level.spawn_animation(me.cell, 'explosion');
+                level.remove_tile(me);
+            }
+        },
+    },
+    bucket_gravel: {
+      ...COMMON_TOOL,
+      on_depart(me, level, other) {
+            let terrain = me.cell.get_terrain();
+            if (other.type.is_real_player && !me.cell.get_item_mod())
+            {
+                level.sfx.play_once('step-gravel', me.cell);
+                level.transmute_tile(terrain, 'gravel');
+                level.spawn_animation(me.cell, 'puff');
+                level.remove_tile(me);
+            }
+        },
     },
 
     // Progression
