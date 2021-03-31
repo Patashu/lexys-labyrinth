@@ -943,7 +943,7 @@ const TILE_ENCODING = {
         is_extension: true,
     },
     0xf7: {
-        name: 'cloud_monster',
+        name: 'cloud_block',
         has_next: true,
         is_extension: true,
     },
@@ -954,6 +954,16 @@ const TILE_ENCODING = {
     },
     0xf9: {
         name: 'cloud_water',
+        has_next: true,
+        is_extension: true,
+    },
+    0xfa: {
+        name: 'cloud_nonplayer',
+        has_next: true,
+        is_extension: true,
+    },
+    0xfb: {
+        name: 'hidden_item_robust',
         has_next: true,
         is_extension: true,
     },

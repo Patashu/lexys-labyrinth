@@ -50,6 +50,7 @@ function blocks_leaving_thin_walls(me, actor, direction) {
 
 function water_splash(me, level, other) {
     // TODO cc1 allows items under water, i think; water was on the upper layer
+    //(should now supported by water cloud/hidden item combo)
     level.sfx.play_once('splash', me.cell);
     var cloud_water = me.type.name === 'cloud_water_after';
     if (other.type.name === 'dirt_block') {
@@ -331,16 +332,19 @@ const COMMON_CLOUD_AFTER = {
         //MSCC bomb/X illegal tiles turn into floor/X illegal tiles not straight into X
         if (other.type.ttl) { return; }
         //silly dirt check
-         if (me.type.name === 'cloud_player_after' && other.type.name === 'ghost' && ! other.has_item('hiking_boots')) {
-            me.dont_reveal = true;
-            this.get_rid_of_hidden_item(me, level);
-            level.transmute_tile(me, 'dirt');
-            me.dont_reveal = false;
-            return;
-         }
+        if (me.type.name === 'cloud_player_after' && other.type.name === 'ghost' && ! other.has_item('hiking_boots')) {
+          me.dont_reveal = true;
+          this.get_rid_of_hidden_item(me, level);
+          level.transmute_tile(me, 'dirt');
+          me.dont_reveal = false;
+          return;
+        }
+         
+        var mscc_erasure = me.type.name !== 'cloud_block_after' && me.type.name !== 'cloud_nonplayer_after'
+         
         //MSCC: when a non-player non-block actor steps on an illegal tile the lower layer is erased instead of revealed
         //TODO: block on item/hidden terrain leaves the item and erases the terrain. (block on item/item erases the bottom item but I can't place that yet.) (TODO: I think for hidden item/hidden terrain you erase the item and leave the terrain, just to be different)
-        if (me.type.name !== 'cloud_monster_after' && !(other.type.is_player || other.type.is_block)) {
+        if (mscc_erasure && !(other.type.is_player || other.type.is_block)) {
             me.dont_reveal = true;
             this.get_rid_of_hidden_item(me, level);
             level.transmute_tile(me, 'floor');
@@ -351,7 +355,7 @@ const COMMON_CLOUD_AFTER = {
         //block item/hidden terrain erases the terrain.
         //I've decided block on hidden item/hidden terrain erases the item to be different.
         //terrain/terrain and item/item don't really matter yet.
-        if (me.type.name !== 'cloud_monster_after' && other.type.is_block) {
+        if (mscc_erasure && other.type.is_block) {
             if (me.cell.get_item_mod() && me.cell.get_item_mod().type.name == 'hidden_item') {
                 this.get_rid_of_hidden_item(me, level);
             }
@@ -359,7 +363,7 @@ const COMMON_CLOUD_AFTER = {
                 me.dont_reveal = true;
                 level.transmute_tile(me, 'floor');
                 me.dont_reveal = false;
-				return;
+            return;
             }
         }
         //guess I'll always play this
@@ -1272,16 +1276,40 @@ const TILE_TYPES = {
             }
         }
     },
+    hidden_item_robust: {
+        layer: LAYERS.item_mod,
+        on_ready(me, level) {
+            let item = me.cell.get_item();
+            if (item) {
+                level._set_tile_prop(me, "hidden_tile", item);
+                level.remove_tile(item);
+            }
+        },
+        after_arrive(me, level, other) {
+            //nevermind if something blew up while entering our tile
+            if (other.type.ttl) { return; }
+            this.on_death(me, level);
+            level.remove_tile(me);
+        },
+        on_death(me, level) {
+            if (me.hidden_tile) {
+                level.add_tile(me.hidden_tile, me.cell);
+            }
+        }
+    },
     cloud: {
         ...COMMON_CLOUD_BEFORE,
     },
     cloud_player: {
         ...COMMON_CLOUD_BEFORE,
     },
-    cloud_monster: {
+    cloud_block: {
         ...COMMON_CLOUD_BEFORE,
     },
     cloud_water: {
+        ...COMMON_CLOUD_BEFORE,
+    },
+    cloud_nonplayer: {
         ...COMMON_CLOUD_BEFORE,
     },
     cloud_after: {
@@ -1295,9 +1323,9 @@ const TILE_TYPES = {
                 ! other.has_item('hiking_boots'));
         },
     },
-    cloud_monster_after: {
+    cloud_block_after: {
         ...COMMON_CLOUD_AFTER,
-        blocks_collision: COLLISION.playerlike,
+        blocks_collision: ~(COLLISION.block_cc1 | COLLISION.block_cc2),
     },
     cloud_water_after: {
         ...COMMON_CLOUD_AFTER,
@@ -1306,6 +1334,10 @@ const TILE_TYPES = {
             if (other.type.name === 'ghost' && ! other.has_item('flippers'))
                 return true;
         },
+    },
+    cloud_nonplayer_after: {
+        ...COMMON_CLOUD_AFTER,
+        blocks_collision: COLLISION.playerlike,
     },
 
     // Mechanisms

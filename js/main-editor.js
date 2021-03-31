@@ -1636,9 +1636,11 @@ const EDITOR_PALETTE = [{
         'sokoban_wall/yellow',
         'cloud',
         'cloud_player',
-        'cloud_monster',
+        'cloud_block',
         'cloud_water',
+        'cloud_nonplayer',
         'hidden_item',
+        'hidden_item_robust',
     ],
 }];
 
@@ -2293,17 +2295,25 @@ const EDITOR_TILE_DESCRIPTIONS = {
         name: "Cloud (Dirt)",
         desc: "Acts like dirt. Hides and negates the properties of the terrain underneath (but NOT the item) until after it's cleared.",
     },
-    cloud_monster: {
-        name: "Cloud (monster only)",
-        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by non-player actors, and unlike regular Cloud does reveal the underlying tile.",
+    cloud_block: {
+        name: "Cloud (block only)",
+        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by blocks.",
     },
     cloud_water: {
         name: "Cloud (Water)",
         desc: "Acts like water. Hides and negates the properties of the terrain underneath (but NOT the item). Underlying terrain is erased by swimming actors. When filled by a block, turns into Cloud or Cloud (Dirt) instead of Floor/Dirt.",
     },
+    cloud_nonplayer: {
+        name: "Cloud (non-player only)",
+        desc: "Hides and negates the properties of the terrain underneath (but NOT the item) until after the first time it's stepped on. Can only be stepped on by non-player actors.",
+    },
     hidden_item: {
         name: "Hidden item",
         desc: "Hides and negates the properties of the item underneath until after the first time it's stepped on. When stepped on by a non-block non-player actor, is erased.",
+    },
+    hidden_item_robust: {
+        name: "Hidden item (robust)",
+        desc: "Hides and negates the properties of the item underneath until after the first time it's stepped on. Unlike regular hidden item, can't be erased.",
     },
 };
 

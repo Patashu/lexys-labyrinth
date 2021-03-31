@@ -1113,7 +1113,7 @@ export const LL_TILESET_LAYOUT = {
         hidden: [9, 15],
         revealed: [9, 14],
     },
-    cloud_monster: {
+    cloud_block: {
         __special__: 'perception_2',
         modes: new Set(['editor', 'xray']),
         hidden: [10, 15],
@@ -1124,6 +1124,12 @@ export const LL_TILESET_LAYOUT = {
         modes: new Set(['editor', 'xray']),
         hidden: [11, 15],
         revealed: [11, 14],
+    },
+    cloud_nonplayer: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [12, 15],
+        revealed: [12, 14],
     },
     cloud_after: {
         __special__: 'perception_2',
@@ -1137,7 +1143,7 @@ export const LL_TILESET_LAYOUT = {
         hidden: [9, 15],
         revealed: [9, 14],
     },
-    cloud_monster_after: {
+    cloud_block_after: {
         __special__: 'perception_2',
         modes: new Set(['editor', 'xray']),
         hidden: [10, 15],
@@ -1149,11 +1155,23 @@ export const LL_TILESET_LAYOUT = {
         hidden: [11, 15],
         revealed: [11, 14],
     },
+    cloud_nonplayer_after: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [12, 15],
+        revealed: [12, 14],
+    },
     hidden_item: {
         __special__: 'perception_2',
         modes: new Set(['editor', 'xray']),
         hidden: [8, 18],
         revealed: [8, 18],
+    },
+    hidden_item_robust: {
+        __special__: 'perception_2',
+        modes: new Set(['editor', 'xray']),
+        hidden: [9, 18],
+        revealed: [9, 18],
     },
     no_player1_sign: [10, 2],
     no_player2_sign: [10, 3],
