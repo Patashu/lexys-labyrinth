@@ -2260,7 +2260,10 @@ export class Tileset {
             // This is an actor that's not moving, so use the idle frame
             n = drawspec.idle_frame_index ?? 0;
         }
-
+        if (n < 0) {
+            //should never happen, but happens when bulk tests fail for some reason
+            n = 0;
+        }
         packet.blit(...frames[n]);
     }
 
